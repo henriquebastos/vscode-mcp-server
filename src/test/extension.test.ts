@@ -24,6 +24,7 @@ suite('Extension Test Suite', () => {
         mockMCPServer = {
             start: sinon.stub().resolves(),
             stop: sinon.stub().resolves(),
+            setupTools: sinon.spy(),
             setFileListingCallback: sinon.spy()
         };
         
@@ -49,8 +50,9 @@ suite('Extension Test Suite', () => {
         
         // Mock configuration
         workspaceConfig = {
-            get: sinon.stub().withArgs('port').returns(4321)
+            get: sinon.stub()
         };
+        workspaceConfig.get.withArgs('port').returns(4321);
         getConfigurationStub = sinon.stub(vscode.workspace, 'getConfiguration').returns(workspaceConfig);
         
         // Create a mocked extension context
@@ -73,6 +75,8 @@ suite('Extension Test Suite', () => {
     });
 
     test('Extension should read port from configuration', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(true);
+
         // Activate the extension
         await extension.activate(context);
         
@@ -84,6 +88,26 @@ suite('Extension Test Suite', () => {
         assert.strictEqual(MockServerConstructor.calledWith(4321), true, 'MCPServer not created with configured port');
     });
 
+    test('Editor tools should be enabled by default in tool configuration', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(true);
+        workspaceConfig.get.withArgs('enabledTools').returns({});
+
+        await extension.activate(context);
+
+        const toolConfig = MockServerConstructor.firstCall.args[3];
+        assert.strictEqual(toolConfig.editor, true, 'Editor tools were not enabled by default');
+    });
+
+    test('Editor tools should respect disabled configuration', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(true);
+        workspaceConfig.get.withArgs('enabledTools').returns({ editor: false });
+
+        await extension.activate(context);
+
+        const toolConfig = MockServerConstructor.firstCall.args[3];
+        assert.strictEqual(toolConfig.editor, false, 'Editor tools ignored disabled configuration');
+    });
+
     test('Status bar item should be created with proper attributes', async () => {
         // Activate the extension
         await extension.activate(context);
@@ -92,11 +116,9 @@ suite('Extension Test Suite', () => {
         assert.strictEqual(createStatusBarItemStub.called, true, 'Status bar item not created');
         
         // Check the status bar attributes
-        assert.strictEqual(statusBarItem.command, 'vscode-mcp-server.showServerInfo', 'Status bar command not set correctly');
+        assert.strictEqual(statusBarItem.command, 'vscode-mcp-server.toggleServer', 'Status bar command not set correctly');
         assert.strictEqual(statusBarItem.show.called, true, 'Status bar not shown');
-        
-        // Check that the text contains the port number
-        assert.strictEqual(statusBarItem.text.includes('4321'), true, 'Status bar does not show configured port');
+        assert.strictEqual(statusBarItem.text, '$(server) MCP Server: Off', 'Status bar does not show disabled state');
     });
 
     test('Server info command should be registered', async () => {
@@ -119,6 +141,8 @@ suite('Extension Test Suite', () => {
     });
 
     test('Deactivate should clean up resources', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(true);
+
         // First activate to set up resources
         await extension.activate(context);
         

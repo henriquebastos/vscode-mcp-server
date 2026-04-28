@@ -47,12 +47,12 @@ export function createMockContext(): PartialExtensionContext {
     const context: PartialExtensionContext = {
         subscriptions: [],
         workspaceState: {
-            get: () => undefined,
+            get: <T>(_key: string, defaultValue?: T) => defaultValue,
             update: () => Promise.resolve(),
             keys: () => []
         },
         globalState: {
-            get: () => undefined,
+            get: <T>(_key: string, defaultValue?: T) => defaultValue,
             update: () => Promise.resolve(),
             setKeysForSync: () => {},
             keys: () => []

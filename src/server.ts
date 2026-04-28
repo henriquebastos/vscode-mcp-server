@@ -9,6 +9,8 @@ import { registerEditTools } from './tools/edit-tools';
 import { registerShellTools } from './tools/shell-tools';
 import { registerDiagnosticsTools } from './tools/diagnostics-tools';
 import { registerSymbolTools } from './tools/symbol-tools';
+import { disposeEditorAnnotationService } from './editor/annotation-service';
+import { registerEditorTools } from './tools/editor-tools';
 import { logger } from './utils/logger';
 
 export interface ToolConfiguration {
@@ -17,6 +19,7 @@ export interface ToolConfiguration {
     shell: boolean;
     diagnostics: boolean;
     symbol: boolean;
+    editor: boolean;
 }
 
 export class MCPServer {
@@ -43,7 +46,8 @@ export class MCPServer {
             edit: true,
             shell: true,
             diagnostics: true,
-            symbol: true
+            symbol: true,
+            editor: true
         };
         this.app = express();
         this.app.use(express.json());
@@ -72,51 +76,59 @@ export class MCPServer {
     }
     
     public setupTools(): void {
-        // Register tools from the tools module based on configuration
-        if (this.fileListingCallback) {
-            logger.info(`Setting up MCP tools with configuration: ${JSON.stringify(this.toolConfig)}`);
-            
-            // Register file tools if enabled
-            if (this.toolConfig.file) {
+        logger.info(`Setting up MCP tools with configuration: ${JSON.stringify(this.toolConfig)}`);
+
+        // Register file tools if enabled and the required callback is available
+        if (this.toolConfig.file) {
+            if (this.fileListingCallback) {
                 registerFileTools(this.server, this.fileListingCallback);
                 logger.info('MCP file tools registered successfully');
             } else {
-                logger.info('MCP file tools disabled by configuration');
-            }
-            
-            // Register edit tools if enabled
-            if (this.toolConfig.edit) {
-                registerEditTools(this.server);
-                logger.info('MCP edit tools registered successfully');
-            } else {
-                logger.info('MCP edit tools disabled by configuration');
-            }
-            
-            // Register shell tools if enabled
-            if (this.toolConfig.shell) {
-                registerShellTools(this.server, this.terminal);
-                logger.info('MCP shell tools registered successfully');
-            } else {
-                logger.info('MCP shell tools disabled by configuration');
-            }
-            
-            // Register diagnostics tools if enabled
-            if (this.toolConfig.diagnostics) {
-                registerDiagnosticsTools(this.server);
-                logger.info('MCP diagnostics tools registered successfully');
-            } else {
-                logger.info('MCP diagnostics tools disabled by configuration');
-            }
-            
-            // Register symbol tools if enabled
-            if (this.toolConfig.symbol) {
-                registerSymbolTools(this.server);
-                logger.info('MCP symbol tools registered successfully');
-            } else {
-                logger.info('MCP symbol tools disabled by configuration');
+                logger.warn('MCP file tools enabled, but file listing callback is not set');
             }
         } else {
-            logger.warn('File listing callback not set during tools setup');
+            logger.info('MCP file tools disabled by configuration');
+        }
+        
+        // Register edit tools if enabled
+        if (this.toolConfig.edit) {
+            registerEditTools(this.server);
+            logger.info('MCP edit tools registered successfully');
+        } else {
+            logger.info('MCP edit tools disabled by configuration');
+        }
+        
+        // Register shell tools if enabled
+        if (this.toolConfig.shell) {
+            registerShellTools(this.server, this.terminal);
+            logger.info('MCP shell tools registered successfully');
+        } else {
+            logger.info('MCP shell tools disabled by configuration');
+        }
+        
+        // Register diagnostics tools if enabled
+        if (this.toolConfig.diagnostics) {
+            registerDiagnosticsTools(this.server);
+            logger.info('MCP diagnostics tools registered successfully');
+        } else {
+            logger.info('MCP diagnostics tools disabled by configuration');
+        }
+        
+        // Register symbol tools if enabled
+        if (this.toolConfig.symbol) {
+            registerSymbolTools(this.server);
+            logger.info('MCP symbol tools registered successfully');
+        } else {
+            logger.info('MCP symbol tools disabled by configuration');
+        }
+
+        // Register editor tools if enabled
+        if (this.toolConfig.editor) {
+            registerEditorTools(this.server);
+            logger.info('MCP editor tools registered successfully');
+        } else {
+            disposeEditorAnnotationService();
+            logger.info('MCP editor tools disabled by configuration');
         }
     }
 
@@ -301,6 +313,8 @@ export class MCPServer {
         } catch (error) {
             logger.error(`[MCPServer.stop] Error during server shutdown: ${error instanceof Error ? error.message : String(error)}`);
             throw error;
+        } finally {
+            disposeEditorAnnotationService();
         }
     }
 }

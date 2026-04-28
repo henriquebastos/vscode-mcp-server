@@ -215,6 +215,14 @@ The extension creates an MCP server that:
   - Analyzing code architecture and relationships
   - Finding all symbols of specific types within a file
 
+### Editor Tools
+- **get_editor_context_code**: Returns the current VS Code editor context, including active editor metadata, selections, visible ranges, optional selected text, and optional visible editors.
+- **reveal_range_code**: Reveals a precise range in VS Code without selecting text.
+- **set_highlight_code**: Sets temporary visual highlights over one or more precise ranges, grouped by annotation id.
+- **set_inline_callout_code**: Shows a visible inline title and message next to a precise range.
+- **clear_annotations_code**: Clears temporary highlights and callouts by id, path, or globally.
+- **go_to_definition_code**: Navigates VS Code to the first symbol definition and returns the resulting location.
+
 ### Shell Tools
 - **execute_shell_command_code**: Executes a shell command in the VS Code integrated terminal with shell integration
   - Parameters:
@@ -236,7 +244,7 @@ Currently, only one workspace is supported. The extension also only works locall
 * `vscode-mcp-server.port`: The port number for the MCP server (default: 3000)
 * `vscode-mcp-server.host`: Host address for the MCP server (default: 127.0.0.1)
 * `vscode-mcp-server.defaultEnabled`: Whether the MCP server should be enabled by default on VS Code startup
-* `vscode-mcp-server.enabledTools`: Configure which tool categories are enabled (file, edit, shell, diagnostics, symbol)
+* `vscode-mcp-server.enabledTools`: Configure which tool categories are enabled (file, edit, shell, diagnostics, symbol, editor)
 
 **Selective Tool Configuration**: Useful for coding agents that already have certain capabilities. For example, with Claude Code you might disable file/edit tools and only enable symbol tools to add VS Code-specific symbol searching without tool duplication.
 

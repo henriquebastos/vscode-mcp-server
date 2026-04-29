@@ -46,6 +46,16 @@ export interface SetExplanationCommentInput {
     kind?: AnnotationKind;
 }
 
+export interface SetHoverNoteInput {
+    id?: string;
+    path?: string;
+    range: AnnotationRangeInput;
+    title?: string;
+    message: string;
+    mode?: AnnotationMode;
+    kind?: AnnotationKind;
+}
+
 export interface AnnotationOperationResult {
     id: string;
     paths: string[];
@@ -81,6 +91,12 @@ interface GutterMarkerEntry {
     kind: AnnotationKind;
 }
 
+interface HoverNoteEntry {
+    uri: vscode.Uri;
+    option: vscode.DecorationOptions;
+    kind: AnnotationKind;
+}
+
 interface ExplanationCommentEntry {
     uri: vscode.Uri;
     thread: vscode.CommentThread;
@@ -101,6 +117,7 @@ interface AnnotationGroup {
     highlights: HighlightEntry[];
     callouts: CalloutEntry[];
     gutterMarkers: GutterMarkerEntry[];
+    hoverNotes: HoverNoteEntry[];
     explanationComments: ExplanationCommentEntry[];
 }
 
@@ -110,7 +127,7 @@ const DEFAULT_ANNOTATION_KIND: AnnotationKind = 'focus';
 function getOrCreateGroup(groups: Map<string, AnnotationGroup>, id: string): AnnotationGroup {
     let group = groups.get(id);
     if (!group) {
-        group = { highlights: [], callouts: [], gutterMarkers: [], explanationComments: [] };
+        group = { highlights: [], callouts: [], gutterMarkers: [], hoverNotes: [], explanationComments: [] };
         groups.set(id, group);
     }
 
@@ -122,7 +139,7 @@ function getVisibleEditor(uri: vscode.Uri): vscode.TextEditor | undefined {
 }
 
 function hasEntries(group: AnnotationGroup): boolean {
-    return group.highlights.length > 0 || group.callouts.length > 0 || group.gutterMarkers.length > 0 || group.explanationComments.length > 0;
+    return group.highlights.length > 0 || group.callouts.length > 0 || group.gutterMarkers.length > 0 || group.hoverNotes.length > 0 || group.explanationComments.length > 0;
 }
 
 function addEntryPaths(paths: Set<string>, group: AnnotationGroup): void {
@@ -135,12 +152,15 @@ function addEntryPaths(paths: Set<string>, group: AnnotationGroup): void {
     for (const entry of group.gutterMarkers) {
         paths.add(uriToWorkspacePath(entry.uri));
     }
+    for (const entry of group.hoverNotes) {
+        paths.add(uriToWorkspacePath(entry.uri));
+    }
     for (const entry of group.explanationComments) {
         paths.add(uriToWorkspacePath(entry.uri));
     }
 }
 
-function operationResult(id: string, entries: Array<HighlightEntry | CalloutEntry | GutterMarkerEntry | ExplanationCommentEntry>): AnnotationOperationResult {
+function operationResult(id: string, entries: Array<HighlightEntry | CalloutEntry | GutterMarkerEntry | HoverNoteEntry | ExplanationCommentEntry>): AnnotationOperationResult {
     const paths = new Set(entries.map(entry => uriToWorkspacePath(entry.uri)));
     return { id, paths: Array.from(paths), rangeCount: entries.length };
 }
@@ -251,6 +271,12 @@ function createGutterMarkerDecorationOptions(kind: AnnotationKind): vscode.Decor
     };
 }
 
+function createHoverNoteDecorationOptions(kind: AnnotationKind): vscode.DecorationRenderOptions {
+    return {
+        textDecoration: `underline wavy ${markerIconColor(kind)}`
+    };
+}
+
 function escapeMarkdownText(text: string): string {
     return text.replace(/[\\`*_{}\[\]()#+\-.!|>]/g, character => `\\${character}`);
 }
@@ -273,6 +299,7 @@ export class EditorAnnotationService {
     private readonly highlightDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
     private readonly calloutDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
     private readonly gutterMarkerDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
+    private readonly hoverNoteDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
     private readonly visibleEditorChangeDisposable: vscode.Disposable;
     private commentController: vscode.CommentController | undefined;
 
@@ -367,6 +394,24 @@ export class EditorAnnotationService {
         return operationResult(id, group.gutterMarkers);
     }
 
+    public async setHoverNote(input: SetHoverNoteInput): Promise<AnnotationOperationResult> {
+        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const mode = input.mode ?? 'replace';
+        const kind = input.kind ?? 'info';
+        const existingGroup = this.groups.get(id);
+        const nextHoverNotes = mode === 'add' && existingGroup ? [...existingGroup.hoverNotes] : [];
+        const target = await resolveEditorTarget({ path: input.range.path ?? input.path });
+        const range = mcpRangeToVsCodeRange(input.range);
+        const option = this.createHoverNoteOption(range, input.message, input.title);
+
+        const group = getOrCreateGroup(this.groups, id);
+        group.hoverNotes = [...nextHoverNotes, { uri: target.uri, option, kind }];
+        this.getHoverNoteDecorationType(kind);
+        this.applyHoverNotes();
+
+        return operationResult(id, group.hoverNotes);
+    }
+
     public async setExplanationComment(input: SetExplanationCommentInput): Promise<AnnotationOperationResult> {
         const id = input.id ?? DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
@@ -411,14 +456,15 @@ export class EditorAnnotationService {
                 }
 
                 if (pathKey) {
-                    const beforeCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.explanationComments.length;
+                    const beforeCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.hoverNotes.length + group.explanationComments.length;
                     group.highlights = group.highlights.filter(entry => entry.uri.toString() !== pathKey);
                     group.callouts = group.callouts.filter(entry => entry.uri.toString() !== pathKey);
                     group.gutterMarkers = group.gutterMarkers.filter(entry => entry.uri.toString() !== pathKey);
+                    group.hoverNotes = group.hoverNotes.filter(entry => entry.uri.toString() !== pathKey);
                     const removedComments = group.explanationComments.filter(entry => entry.uri.toString() === pathKey);
                     this.disposeCommentEntries(removedComments);
                     group.explanationComments = group.explanationComments.filter(entry => entry.uri.toString() !== pathKey);
-                    const afterCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.explanationComments.length;
+                    const afterCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.hoverNotes.length + group.explanationComments.length;
 
                     if (beforeCount !== afterCount) {
                         if (pathLabel) {
@@ -440,6 +486,7 @@ export class EditorAnnotationService {
         this.applyHighlights();
         this.applyCallouts();
         this.applyGutterMarkers();
+        this.applyHoverNotes();
 
         return { clearedIds, clearedPaths: Array.from(clearedPaths) };
     }
@@ -509,6 +556,16 @@ export class EditorAnnotationService {
         return decorationType;
     }
 
+    private getHoverNoteDecorationType(kind: AnnotationKind): vscode.TextEditorDecorationType {
+        let decorationType = this.hoverNoteDecorationTypes.get(kind);
+        if (!decorationType) {
+            decorationType = vscode.window.createTextEditorDecorationType(createHoverNoteDecorationOptions(kind));
+            this.hoverNoteDecorationTypes.set(kind, decorationType);
+        }
+
+        return decorationType;
+    }
+
     private createGutterMarkerOption(range: vscode.Range, label?: string): vscode.DecorationOptions {
         const option: vscode.DecorationOptions = { range };
         if (label) {
@@ -516,6 +573,17 @@ export class EditorAnnotationService {
         }
 
         return option;
+    }
+
+    private createHoverNoteOption(range: vscode.Range, message: string, title?: string): vscode.DecorationOptions {
+        const hoverBody = title
+            ? `**${escapeMarkdownText(title)}**\n\n${sanitizeGuidedMarkdown(message)}`
+            : sanitizeGuidedMarkdown(message);
+
+        return {
+            range,
+            hoverMessage: createUntrustedMarkdown(hoverBody)
+        };
     }
 
     private applyHighlights(): void {
@@ -568,6 +636,7 @@ export class EditorAnnotationService {
         this.applyHighlights();
         this.applyCallouts();
         this.applyGutterMarkers();
+        this.applyHoverNotes();
     }
 
     private applyGutterMarkers(): void {
@@ -593,6 +662,29 @@ export class EditorAnnotationService {
         }
     }
 
+    private applyHoverNotes(): void {
+        const notesByKindAndUri = new Map<AnnotationKind, Map<string, CalloutsForUri>>();
+
+        for (const group of this.groups.values()) {
+            for (const entry of group.hoverNotes) {
+                const notesByUri = notesByKindAndUri.get(entry.kind) ?? new Map<string, CalloutsForUri>();
+                const key = entry.uri.toString();
+                const combined = notesByUri.get(key) ?? { uri: entry.uri, options: [] };
+                combined.options.push(entry.option);
+                notesByUri.set(key, combined);
+                notesByKindAndUri.set(entry.kind, notesByUri);
+            }
+        }
+
+        for (const [kind, decorationType] of this.hoverNoteDecorationTypes) {
+            const notesByUri = notesByKindAndUri.get(kind) ?? new Map<string, CalloutsForUri>();
+            for (const editor of vscode.window.visibleTextEditors) {
+                const options = notesByUri.get(editor.document.uri.toString())?.options ?? [];
+                editor.setDecorations(decorationType, options);
+            }
+        }
+    }
+
     public dispose(): void {
         for (const group of this.groups.values()) {
             this.disposeCommentEntries(group.explanationComments);
@@ -611,9 +703,13 @@ export class EditorAnnotationService {
         for (const decorationType of this.gutterMarkerDecorationTypes.values()) {
             decorationType.dispose();
         }
+        for (const decorationType of this.hoverNoteDecorationTypes.values()) {
+            decorationType.dispose();
+        }
         this.highlightDecorationTypes.clear();
         this.calloutDecorationTypes.clear();
         this.gutterMarkerDecorationTypes.clear();
+        this.hoverNoteDecorationTypes.clear();
         this.groups.clear();
     }
 }

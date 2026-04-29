@@ -12,6 +12,7 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
 - inline callouts visible without hover
 - semantic annotation kinds
 - temporary gutter markers
+- squiggle-underlined hover notes
 - anchored guided explanation comments
 - clear-by-id/global cleanup
 - definition navigation
@@ -63,6 +64,7 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
    - `vscode_reveal_range_code`
    - `vscode_set_highlight_code`
    - `vscode_set_inline_callout_code`
+   - `vscode_set_hover_note_code`
    - `vscode_set_gutter_marker_code`
    - `vscode_set_explanation_comment_code`
    - `vscode_clear_annotations_code`
@@ -200,13 +202,13 @@ vscode_clear_annotations_code({ "id": "current" })
 vscode_reveal_range_code({
   "path": "src/tools/editor-tools.ts",
   "range": {
-    "start": { "line": 86, "character": 0 },
-    "end": { "line": 333, "character": 1 }
+    "start": { "line": 96, "character": 0 },
+    "end": { "line": 380, "character": 1 }
   }
 })
 ```
 
-Highlight the registry function plus the eight tool names:
+Highlight the registry function plus the nine tool names:
 
 ```json
 vscode_set_highlight_code({
@@ -214,15 +216,16 @@ vscode_set_highlight_code({
   "path": "src/tools/editor-tools.ts",
   "mode": "replace",
   "ranges": [
-    { "start": { "line": 86, "character": 16 }, "end": { "line": 86, "character": 35 } },
-    { "start": { "line": 88, "character": 8 }, "end": { "line": 88, "character": 33 } },
-    { "start": { "line": 124, "character": 8 }, "end": { "line": 124, "character": 31 } },
-    { "start": { "line": 149, "character": 8 }, "end": { "line": 149, "character": 32 } },
-    { "start": { "line": 174, "character": 8 }, "end": { "line": 174, "character": 33 } },
-    { "start": { "line": 211, "character": 8 }, "end": { "line": 211, "character": 32 } },
-    { "start": { "line": 249, "character": 8 }, "end": { "line": 249, "character": 38 } },
-    { "start": { "line": 287, "character": 8 }, "end": { "line": 287, "character": 28 } },
-    { "start": { "line": 315, "character": 8 }, "end": { "line": 315, "character": 27 } }
+    { "start": { "line": 96, "character": 16 }, "end": { "line": 96, "character": 35 } },
+    { "start": { "line": 98, "character": 8 }, "end": { "line": 98, "character": 33 } },
+    { "start": { "line": 134, "character": 8 }, "end": { "line": 134, "character": 31 } },
+    { "start": { "line": 159, "character": 8 }, "end": { "line": 159, "character": 32 } },
+    { "start": { "line": 184, "character": 8 }, "end": { "line": 184, "character": 33 } },
+    { "start": { "line": 221, "character": 8 }, "end": { "line": 221, "character": 32 } },
+    { "start": { "line": 259, "character": 8 }, "end": { "line": 259, "character": 29 } },
+    { "start": { "line": 296, "character": 8 }, "end": { "line": 296, "character": 38 } },
+    { "start": { "line": 334, "character": 8 }, "end": { "line": 334, "character": 28 } },
+    { "start": { "line": 362, "character": 8 }, "end": { "line": 362, "character": 27 } }
   ]
 })
 ```
@@ -235,11 +238,11 @@ vscode_set_inline_callout_code({
   "path": "src/tools/editor-tools.ts",
   "mode": "replace",
   "range": {
-    "start": { "line": 86, "character": 16 },
-    "end": { "line": 86, "character": 35 }
+    "start": { "line": 96, "character": 16 },
+    "end": { "line": 96, "character": 35 }
   },
   "title": "Tool registry",
-  "message": "This function maps the editor services into eight composable MCP primitives."
+  "message": "This function maps the editor services into nine composable MCP primitives."
 })
 ```
 
@@ -254,8 +257,8 @@ vscode_clear_annotations_code({ "id": "current" })
 ```json
 vscode_reveal_range_code({
   "range": {
-    "start": { "line": 286, "character": 4 },
-    "end": { "line": 312, "character": 6 }
+    "start": { "line": 333, "character": 4 },
+    "end": { "line": 359, "character": 6 }
   }
 })
 ```
@@ -267,9 +270,9 @@ vscode_set_highlight_code({
   "id": "current",
   "mode": "replace",
   "ranges": [
-    { "start": { "line": 287, "character": 8 }, "end": { "line": 287, "character": 28 } },
-    { "start": { "line": 294, "character": 12 }, "end": { "line": 298, "character": 107 } },
-    { "start": { "line": 301, "character": 33 }, "end": { "line": 301, "character": 103 } }
+    { "start": { "line": 334, "character": 8 }, "end": { "line": 334, "character": 28 } },
+    { "start": { "line": 341, "character": 12 }, "end": { "line": 345, "character": 107 } },
+    { "start": { "line": 348, "character": 33 }, "end": { "line": 348, "character": 103 } }
   ]
 })
 ```
@@ -281,8 +284,8 @@ vscode_set_inline_callout_code({
   "id": "current",
   "mode": "add",
   "range": {
-    "start": { "line": 301, "character": 33 },
-    "end": { "line": 301, "character": 103 }
+    "start": { "line": 348, "character": 33 },
+    "end": { "line": 348, "character": 103 }
   },
   "title": "Thin handler",
   "message": "After schema validation, this delegates highlight behavior to the annotation service."
@@ -299,8 +302,8 @@ vscode_set_highlight_code({
   "mode": "add",
   "ranges": [
     {
-      "start": { "line": 303, "character": 12 },
-      "end": { "line": 308, "character": 21 }
+      "start": { "line": 350, "character": 12 },
+      "end": { "line": 355, "character": 21 }
     }
   ]
 })
@@ -313,8 +316,8 @@ vscode_set_inline_callout_code({
   "id": "current",
   "mode": "add",
   "range": {
-    "start": { "line": 303, "character": 12 },
-    "end": { "line": 308, "character": 21 }
+    "start": { "line": 350, "character": 12 },
+    "end": { "line": 355, "character": 21 }
   },
   "title": "Added focus",
   "message": "This extra highlight was appended with mode=add, so earlier highlights stayed visible."
@@ -328,7 +331,7 @@ Navigate from `setHighlights` into `src/editor/annotation-service.ts`:
 ```json
 vscode_go_to_definition_code({
   "path": "src/tools/editor-tools.ts",
-  "position": { "line": 301, "character": 62 }
+  "position": { "line": 348, "character": 62 }
 })
 ```
 
@@ -365,7 +368,7 @@ End with:
 vscode_clear_annotations_code({ "all": true })
 ```
 
-Expected: all temporary highlights, inline callouts, gutter markers, overview-ruler markers, and Guided Explanation comments disappear.
+Expected: all temporary highlights, inline callouts, hover notes, gutter markers, overview-ruler markers, and Guided Explanation comments disappear.
 
 ## Success criteria
 

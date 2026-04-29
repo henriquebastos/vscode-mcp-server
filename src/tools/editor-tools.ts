@@ -55,6 +55,16 @@ interface SetExplanationCommentToolInput {
     kind?: AnnotationKind;
 }
 
+interface SetHoverNoteToolInput {
+    id?: string;
+    path?: string;
+    range: AnnotationRangeInput;
+    title?: string;
+    message: string;
+    mode?: AnnotationMode;
+    kind?: AnnotationKind;
+}
+
 interface ClearAnnotationsToolInput {
     id?: string;
     path?: string;
@@ -147,7 +157,7 @@ export function registerEditorTools(server: McpServer): void {
 
     server.tool(
         'clear_annotations_code',
-        `Clears temporary editor annotations, including highlights, inline callouts, gutter markers, overview-ruler markers, and Guided Explanation comments.
+        `Clears temporary editor annotations, including highlights, inline callouts, hover notes, gutter markers, overview-ruler markers, and Guided Explanation comments.
 
         WHEN TO USE: Remove stale visual focus before moving to a new explanation. By default clears
         id=current. Provide id to clear one group, path to limit clearing to a file, or all=true to clear everything.`,
@@ -230,6 +240,43 @@ export function registerEditorTools(server: McpServer): void {
                 lines,
                 ranges,
                 label,
+                kind,
+                mode
+            });
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }
+                ]
+            };
+        }
+    );
+
+    server.tool(
+        'set_hover_note_code',
+        `Sets a temporary squiggle-underlined hover note on a precise code range.
+
+        WHEN TO USE: Add complementary word-level or expression-level information without showing
+        persistent inline text. The note is visible as a wavy underline and shows sanitized markdown on hover.`,
+        {
+            id: z.string().optional().default('current').describe('Annotation group id. Defaults to current.'),
+            path: z.string().optional().describe('Workspace-relative path. Defaults to active editor.'),
+            range: annotationRangeSchema.describe('Precise range the hover note annotates'),
+            title: z.string().optional().describe('Optional short hover note title'),
+            message: z.string().describe('Markdown hover note body rendered as untrusted markdown'),
+            kind: annotationKindSchema.optional().default('info').describe('Semantic visual style for the squiggle underline'),
+            mode: z.enum(['replace', 'add']).optional().default('replace').describe('Replace or add to hover notes for the id')
+        },
+        async ({ id, path, range, title, message, kind = 'info', mode = 'replace' }: SetHoverNoteToolInput): Promise<CallToolResult> => {
+            const result = await getEditorAnnotationService().setHoverNote({
+                id,
+                path,
+                range,
+                title,
+                message,
                 kind,
                 mode
             });

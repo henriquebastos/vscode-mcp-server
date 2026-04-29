@@ -31,6 +31,7 @@ Repeat this loop until the user stops:
 3. **Attach visible explanation surfaces**
    - Use `set_inline_callout_code` with a short title and one sentence.
    - Keep callouts under ~120 characters when practical.
+   - Use `set_hover_note_code` for complementary word-level information that should appear on hover via a squiggle underline.
    - Use `set_gutter_marker_code` for step, question, warning, or related-location markers.
    - Use `set_explanation_comment_code` for longer anchored markdown explanations; keep the wording clearly about “Guided Explanation.”
 4. **Explain briefly in chat**

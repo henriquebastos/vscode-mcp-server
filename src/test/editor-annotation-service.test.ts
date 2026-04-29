@@ -81,6 +81,51 @@ suite('Editor Annotation Service', () => {
         assert.ok(relatedOptions.overviewRulerColor, 'related highlight omitted overview ruler color');
     });
 
+    test('sets hover notes as squiggle decorations with sanitized tooltips', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const setDecorationsSpy = sinon.spy();
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: setDecorationsSpy
+        } as unknown as vscode.TextEditor;
+        const focusHighlightDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const focusCalloutDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const hoverNoteDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const createDecorationTypeStub = sinon.stub(vscode.window, 'createTextEditorDecorationType');
+        createDecorationTypeStub.onFirstCall().returns(focusHighlightDecorationType);
+        createDecorationTypeStub.onSecondCall().returns(focusCalloutDecorationType);
+        createDecorationTypeStub.onThirdCall().returns(hoverNoteDecorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = new EditorAnnotationService();
+
+        await service.setHoverNote({
+            kind: 'info',
+            range: { start: { line: 1, character: 2 }, end: { line: 1, character: 8 } },
+            title: 'Word note',
+            message: 'Keep `code`, omit ![tracker](https://example.com/t.png), and strip [local](file:///tmp/secret).'
+        });
+
+        assert.ok((createDecorationTypeStub.thirdCall.args[0].textDecoration as string).includes('underline wavy'));
+        const hoverCall = setDecorationsSpy.getCalls().find(call => call.args[0] === hoverNoteDecorationType);
+        assert.ok(hoverCall, 'hover note decoration was not applied');
+        const options = hoverCall.args[1] as vscode.DecorationOptions[];
+        assert.strictEqual(options.length, 1);
+        assert.strictEqual(options[0].range.start.line, 0);
+        assert.strictEqual(options[0].range.start.character, 2);
+        const hover = options[0].hoverMessage as vscode.MarkdownString;
+        assert.ok(hover instanceof vscode.MarkdownString);
+        assert.strictEqual(hover.isTrusted, false);
+        assert.ok(hover.value.includes('Word note'));
+        assert.ok(hover.value.includes('`code`'));
+        assert.strictEqual(hover.value.includes('!['), false, 'image markdown was not neutralized');
+        assert.strictEqual(hover.value.includes('file://'), false, 'unsafe link scheme was not stripped');
+    });
+
     test('path-limited clear removes both highlights and callouts for the id', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const documentUri = vscode.Uri.file('/workspace/src/example.ts');
@@ -149,10 +194,12 @@ suite('Editor Annotation Service', () => {
         const highlightDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
         const calloutDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
         const gutterDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const hoverNoteDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
         const createDecorationTypeStub = sinon.stub(vscode.window, 'createTextEditorDecorationType');
         createDecorationTypeStub.onFirstCall().returns(highlightDecorationType);
         createDecorationTypeStub.onSecondCall().returns(calloutDecorationType);
         createDecorationTypeStub.onThirdCall().returns(gutterDecorationType);
+        createDecorationTypeStub.onCall(3).returns(hoverNoteDecorationType);
         const firstThread = { dispose: sinon.spy(), canReply: true } as unknown as vscode.CommentThread;
         const secondThread = { dispose: sinon.spy(), canReply: true } as unknown as vscode.CommentThread;
         const controller = {
@@ -195,6 +242,21 @@ suite('Editor Annotation Service', () => {
         });
         await service.setGutterMarkers({ id: 'flow', path: 'src/first.ts', lines: [1] });
         await service.setGutterMarkers({ id: 'flow', path: 'src/second.ts', mode: 'add', lines: [1] });
+        await service.setHoverNote({
+            id: 'flow',
+            path: 'src/first.ts',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'First',
+            message: 'Remove me.'
+        });
+        await service.setHoverNote({
+            id: 'flow',
+            path: 'src/second.ts',
+            mode: 'add',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Second',
+            message: 'Keep me.'
+        });
         await service.setExplanationComment({
             id: 'flow',
             path: 'src/first.ts',
@@ -217,7 +279,7 @@ suite('Editor Annotation Service', () => {
         assert.deepStrictEqual(result.clearedPaths, ['src/first.ts']);
         assert.strictEqual((firstThread.dispose as sinon.SinonSpy).calledOnce, true);
         assert.strictEqual((secondThread.dispose as sinon.SinonSpy).notCalled, true);
-        for (const decorationType of [highlightDecorationType, calloutDecorationType, gutterDecorationType]) {
+        for (const decorationType of [highlightDecorationType, calloutDecorationType, gutterDecorationType, hoverNoteDecorationType]) {
             const firstClearCall = firstSetDecorationsSpy.getCalls().filter(call => call.args[0] === decorationType).at(-1);
             const secondKeepCall = secondSetDecorationsSpy.getCalls().filter(call => call.args[0] === decorationType).at(-1);
             assert.ok(firstClearCall, 'first editor did not receive a clear call');

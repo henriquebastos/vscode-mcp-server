@@ -29,9 +29,11 @@ Add a temporary gutter marker primitive for line/range-oriented walkthrough mark
 
 Use overview-ruler styling as part of kinded highlight and gutter marker decorations rather than introducing a separate overview-ruler tool in the first pass. This keeps the API surface small while making long-file related locations easier to see.
 
+Add a decoration-based hover note primitive for complementary word-level or expression-level information. Hover notes should use a subtle wavy underline and sanitized hover markdown. They should not use diagnostics, should not appear in the Problems panel, and should be clearable through the existing annotation lifecycle.
+
 Add an anchored guided explanation comment primitive using the VS Code Comments API. These comments should be clearly branded as guided explanations, not code review comments. They should support longer markdown bodies, attach to code ranges, be temporary, and be clearable through the existing annotation lifecycle.
 
-The existing clear primitive should clear every temporary annotation surface: highlights, inline callouts, gutter markers, overview-ruler markers, and guided explanation comments.
+The existing clear primitive should clear every temporary annotation surface: highlights, inline callouts, hover notes, gutter markers, overview-ruler markers, and guided explanation comments.
 
 ## User Stories
 
@@ -103,6 +105,7 @@ The existing clear primitive should clear every temporary annotation surface: hi
 - Add optional `kind` support to the existing highlight primitive.
 - Add optional `kind` support to the existing inline callout primitive.
 - Add a new gutter marker primitive for temporary marker decorations anchored to lines or ranges.
+- Add a new hover note primitive for squiggle-underlined, hover-only complementary information on precise ranges.
 - Add a new guided explanation comment primitive for longer anchored explanations using the VS Code Comments API.
 - Do not add a separate overview-ruler primitive in the first pass.
 - Include overview-ruler styling in kinded highlight and gutter marker decoration types where practical.
@@ -116,6 +119,8 @@ The existing clear primitive should clear every temporary annotation surface: hi
 - Preserve additive behavior for multi-location explanations.
 - For existing highlight and inline callout tools, replacement should remain scoped to the surface being set, so setting a highlight does not implicitly remove comments or callouts for the same id.
 - Clearing annotations should operate across every temporary annotation surface that matches the requested id, path, or global clear.
+- Hover notes should use decoration hover messages rather than diagnostics, so they do not imply errors or appear in the Problems panel.
+- Hover note markdown should be sanitized and untrusted, matching the safety posture of guided explanation comments.
 - Path omission should continue to use active-editor fallback where sensible.
 - Missing active editor errors should remain clear and actionable.
 - All paths should remain workspace-relative and validated through the shared path-safety rules.
@@ -150,6 +155,8 @@ The existing clear primitive should clear every temporary annotation surface: hi
 - Tests should cover that gutter markers support replace mode.
 - Tests should cover that gutter markers support add mode.
 - Tests should cover that gutter markers preserve cursor and selection state.
+- Tests should cover that hover notes create wavy underline decorations with sanitized, untrusted hover markdown.
+- Tests should cover that hover notes clear with the same id/path/all lifecycle as other annotation surfaces.
 - Tests should cover that explanation comments create comment threads through the VS Code Comments API.
 - Tests should cover that explanation comments use guided-explanation naming and read-only/no-reply behavior.
 - Tests should cover that explanation comments render markdown safely as untrusted markdown.
@@ -186,6 +193,8 @@ The existing clear primitive should clear every temporary annotation surface: hi
 - Multi-root workspace behavior beyond the project’s existing workspace assumptions.
 - Pixel-perfect styling guarantees across themes.
 - A complete agent prompt rewrite or high-level guided exploration workflow.
+- Diagnostic-backed hover notes that create Problems panel entries or imply source errors.
+- Arbitrary pinned tooltip overlays that stay visible without hover or user interaction.
 - Persistent exploration memory, knowledge graphs, diagrams, or generated notes.
 - Comment reply workflows, resolve workflows, or review approval workflows.
 

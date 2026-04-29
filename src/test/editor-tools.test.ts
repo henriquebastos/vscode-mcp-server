@@ -157,6 +157,37 @@ suite('Editor MCP Tools', () => {
         assert.strictEqual(payload.rangeCount, 1);
     });
 
+    test('registers set_hover_note_code and returns hover note summary', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'set_hover_note_code');
+        assert.ok(tool, 'set_hover_note_code was not registered');
+
+        const result = await tool.handler({
+            title: 'Word note',
+            message: 'Complementary hover information.',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }
+        });
+        const payload = JSON.parse(result.content[0].text);
+
+        assert.strictEqual(payload.id, 'current');
+        assert.deepStrictEqual(payload.paths, ['src/example.ts']);
+        assert.strictEqual(payload.rangeCount, 1);
+    });
+
     test('registers set_explanation_comment_code and returns comment summary', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const documentUri = vscode.Uri.file('/workspace/src/example.ts');

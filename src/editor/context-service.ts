@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { DiffEntryMatch, getEditorDiffService } from './diff-service';
 import { SerializedRange, isUriInsideWorkspace, uriToWorkspacePath, vsCodeRangeToSerializedRange } from './location-utils';
 
 const DEFAULT_MAX_SELECTED_TEXT_CHARACTERS = 4000;
@@ -15,8 +16,15 @@ export interface SerializedSelection extends SerializedRange {
     selectedTextTruncated?: boolean;
 }
 
+export interface SerializedDiffMetadata {
+    diffId: string;
+    entryIndex: number;
+    label?: string;
+    side: 'left' | 'right';
+}
+
 export interface SerializedEditorContext {
-    path: string;
+    path?: string;
     uri: string;
     languageId: string;
     lineCount: number;
@@ -24,6 +32,7 @@ export interface SerializedEditorContext {
     selection: SerializedSelection;
     selections: SerializedSelection[];
     visibleRanges: SerializedRange[];
+    diff?: SerializedDiffMetadata;
 }
 
 export interface EditorContext {
@@ -61,12 +70,35 @@ function serializeSelection(
     return serialized;
 }
 
+function shouldSerializeEditor(editor: vscode.TextEditor): boolean {
+    const uri = editor.document.uri;
+    if (uri.scheme === 'file') {
+        return isUriInsideWorkspace(uri);
+    }
+    if (getEditorDiffService().findEntryForUri(uri)) {
+        return true;
+    }
+    return uri.scheme === 'git' && isUriInsideWorkspace(uri);
+}
+
+function serializeDiffMetadata(match: DiffEntryMatch | undefined): SerializedDiffMetadata | undefined {
+    if (!match) {
+        return undefined;
+    }
+
+    return {
+        diffId: match.diffId,
+        entryIndex: match.entryIndex,
+        label: match.label,
+        side: match.side
+    };
+}
+
 function serializeEditor(
     editor: vscode.TextEditor,
     options: Required<Pick<EditorContextOptions, 'includeSelectedText' | 'maxSelectedTextCharacters'>>
 ): SerializedEditorContext {
-    return {
-        path: uriToWorkspacePath(editor.document.uri),
+    const context: SerializedEditorContext = {
         uri: editor.document.uri.toString(),
         languageId: editor.document.languageId,
         lineCount: editor.document.lineCount,
@@ -75,6 +107,16 @@ function serializeEditor(
         selections: editor.selections.map(selection => serializeSelection(editor.document, selection, options)),
         visibleRanges: editor.visibleRanges.map(vsCodeRangeToSerializedRange)
     };
+    if (isUriInsideWorkspace(editor.document.uri)) {
+        context.path = uriToWorkspacePath(editor.document.uri);
+    }
+
+    const diff = serializeDiffMetadata(getEditorDiffService().findEntryForUri(editor.document.uri));
+    if (diff) {
+        context.diff = diff;
+    }
+
+    return context;
 }
 
 export async function getEditorContext(options: EditorContextOptions = {}): Promise<EditorContext> {
@@ -86,13 +128,13 @@ export async function getEditorContext(options: EditorContextOptions = {}): Prom
     const activeEditor = vscode.window.activeTextEditor;
     const context: EditorContext = {};
 
-    if (activeEditor && isUriInsideWorkspace(activeEditor.document.uri)) {
+    if (activeEditor && shouldSerializeEditor(activeEditor)) {
         context.activeEditor = serializeEditor(activeEditor, serializationOptions);
     }
 
     if (options.includeVisibleEditors) {
         context.visibleEditors = vscode.window.visibleTextEditors
-            .filter(editor => isUriInsideWorkspace(editor.document.uri))
+            .filter(shouldSerializeEditor)
             .map(editor => serializeEditor(editor, serializationOptions));
     }
 

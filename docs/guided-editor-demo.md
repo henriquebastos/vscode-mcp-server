@@ -6,7 +6,8 @@ This demo validates the editor MCP primitives by using them as a collaborative t
 
 Run a real agent-guided walkthrough where the agent explains the implementation visually in VS Code. The demo should exercise:
 
-- current editor context
+- native diff opening with `open_diff_code`
+- current editor context with document URIs and diff-side metadata
 - reveal without selection mutation
 - multi-range highlights
 - inline callouts visible without hover
@@ -18,6 +19,7 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
 - clear-by-id/global cleanup
 - definition navigation
 - pathless follow-up operations against the active editor
+- URI-targeted annotations against diff-side documents
 - user-steered narrowing and relationship highlighting
 
 ## Prerequisites
@@ -61,6 +63,7 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
 
    Expected editor tools include:
 
+   - `vscode_open_diff_code`
    - `vscode_get_editor_context_code`
    - `vscode_reveal_range_code`
    - `vscode_set_highlight_code`
@@ -72,7 +75,47 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
    - `vscode_clear_annotations_code`
    - `vscode_go_to_definition_code`
 
-## Demo prompt
+## Diff review smoke prompt
+
+Ask the agent:
+
+> Open a native VS Code diff for this branch against `main` with `open_diff_code`, then use `get_editor_context_code` with visible editors enabled. Highlight one changed range using the returned `rightUri`, explain it with a hover note, and clear the annotation by URI.
+
+Expected behavior:
+
+- `open_diff_code` returns a temporary `diffId` and normalized entries with exact `leftUri`/`rightUri` document URIs.
+- The diff opens in VS Code's native changes editor, including one-sided entries if files were added or deleted.
+- `get_editor_context_code` reports active/visible editor `uri` values and includes `diff` metadata (`diffId`, entry index, label, and side) when a visible editor matches the temporary diff registry.
+- Annotation tools can target a returned diff-side `uri`; `clear_annotations_code` can clear the same URI without needing a workspace path.
+
+Example source-mode call:
+
+```json
+vscode_open_diff_code({
+  "title": "main vs working tree",
+  "leftUri": "git+file:///absolute/path/to/workspace?ref=main",
+  "rightUri": "file:///absolute/path/to/workspace",
+  "include": ["src/**"],
+  "exclude": ["out/**", "node_modules/**"],
+  "maxFiles": 50
+})
+```
+
+Example explicit-entry call with an added file:
+
+```json
+vscode_open_diff_code({
+  "title": "curated review set",
+  "entries": [
+    {
+      "label": "new helper",
+      "rightUri": "file:///absolute/path/to/workspace/src/new-helper.ts"
+    }
+  ]
+})
+```
+
+## Guided explanation prompt
 
 Ask the agent:
 
@@ -210,7 +253,7 @@ vscode_reveal_range_code({
 })
 ```
 
-Highlight the registry function plus the nine tool names:
+Highlight the registry function plus the editor tool names:
 
 ```json
 vscode_set_highlight_code({
@@ -244,7 +287,7 @@ vscode_set_inline_callout_code({
     "end": { "line": 96, "character": 35 }
   },
   "title": "Tool registry",
-  "message": "This function maps the editor services into nine composable MCP primitives."
+  "message": "This function maps the editor services into composable MCP primitives."
 })
 ```
 

@@ -38,6 +38,38 @@ suite('Editor Annotation Service', () => {
         return service;
     }
 
+    test('sets and clears highlights by document URI for virtual diff documents', async () => {
+        const gitUri = vscode.Uri.parse('git:/workspace/src/example.ts?%7B%22ref%22%3A%22main%22%7D');
+        const originalSelection = new vscode.Selection(0, 0, 0, 0);
+        const setDecorationsSpy = sinon.spy();
+        const activeEditor = {
+            document: { uri: gitUri },
+            selection: originalSelection,
+            setDecorations: setDecorationsSpy
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        const setResult = await service.setHighlights({
+            uri: gitUri.toString(),
+            ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
+        });
+
+        assert.deepStrictEqual(setResult.uris, [gitUri.toString()]);
+        const highlightCall = setDecorationsSpy.getCalls().find(call => call.args[0] === decorationType && call.args[1].length === 1);
+        assert.ok(highlightCall, 'URI-targeted highlight decoration was not applied');
+
+        const clearResult = await service.clearAnnotations({ uri: gitUri.toString() });
+
+        assert.strictEqual(clearResult.clearedIds, 1);
+        assert.deepStrictEqual(clearResult.clearedUris, [gitUri.toString()]);
+        assert.strictEqual(activeEditor.selection, originalSelection);
+    });
+
     test('applies kinded highlights with overview ruler styling without changing selection', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const documentUri = vscode.Uri.file('/workspace/src/example.ts');

@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 
 export interface EditorTargetInput {
     path?: string;
+    uri?: string;
 }
 
 export interface ResolvedEditorTarget {
@@ -115,7 +116,26 @@ export function vsCodeRangeToSerializedRange(range: vscode.Range): SerializedRan
 }
 
 export async function resolveEditorTarget(input: EditorTargetInput = {}): Promise<ResolvedEditorTarget> {
-    if (input.path && input.path.trim().length > 0) {
+    const hasPath = Boolean(input.path && input.path.trim().length > 0);
+    const hasUri = Boolean(input.uri && input.uri.trim().length > 0);
+
+    if (hasPath && hasUri) {
+        throw new Error('Provide either path or uri, not both.');
+    }
+
+    if (hasUri && input.uri) {
+        const uri = vscode.Uri.parse(input.uri, true);
+        if (uri.scheme === 'file' && !isUriInsideWorkspace(uri)) {
+            throw new Error(`URI must stay within the workspace: ${input.uri}`);
+        }
+        return {
+            uri,
+            path: uriToWorkspacePath(uri),
+            editor: findVisibleEditor(uri)
+        };
+    }
+
+    if (hasPath && input.path) {
         const uri = uriForWorkspacePath(input.path);
         return {
             uri,

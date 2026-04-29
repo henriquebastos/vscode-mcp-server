@@ -1,24 +1,28 @@
 import * as vscode from 'vscode';
-import { McpRange, mcpRangeToVsCodeRange, resolveEditorTarget, uriToWorkspacePath } from './location-utils';
+import { McpRange, mcpRangeToVsCodeRange, resolveEditorTarget, isUriInsideWorkspace, uriToWorkspacePath } from './location-utils';
 
 export type AnnotationMode = 'replace' | 'add';
 export type AnnotationKind = 'focus' | 'related' | 'previous' | 'question' | 'warning' | 'info';
 
 export interface AnnotationRangeInput extends McpRange {
     path?: string;
+    uri?: string;
 }
 
-export interface SetHighlightsInput {
-    id?: string;
+interface AnnotationTargetInput {
     path?: string;
+    uri?: string;
+}
+
+export interface SetHighlightsInput extends AnnotationTargetInput {
+    id?: string;
     ranges: AnnotationRangeInput[];
     mode?: AnnotationMode;
     kind?: AnnotationKind;
 }
 
-export interface SetInlineCalloutInput {
+export interface SetInlineCalloutInput extends AnnotationTargetInput {
     id?: string;
-    path?: string;
     range: AnnotationRangeInput;
     title: string;
     message: string;
@@ -26,9 +30,8 @@ export interface SetInlineCalloutInput {
     kind?: AnnotationKind;
 }
 
-export interface SetGutterMarkersInput {
+export interface SetGutterMarkersInput extends AnnotationTargetInput {
     id?: string;
-    path?: string;
     ranges?: AnnotationRangeInput[];
     lines?: number[];
     mode?: AnnotationMode;
@@ -36,9 +39,8 @@ export interface SetGutterMarkersInput {
     label?: string;
 }
 
-export interface SetExplanationCommentInput {
+export interface SetExplanationCommentInput extends AnnotationTargetInput {
     id?: string;
-    path?: string;
     range: AnnotationRangeInput;
     title: string;
     body: string;
@@ -46,9 +48,8 @@ export interface SetExplanationCommentInput {
     kind?: AnnotationKind;
 }
 
-export interface SetHoverNoteInput {
+export interface SetHoverNoteInput extends AnnotationTargetInput {
     id?: string;
-    path?: string;
     range: AnnotationRangeInput;
     title?: string;
     message: string;
@@ -56,9 +57,8 @@ export interface SetHoverNoteInput {
     kind?: AnnotationKind;
 }
 
-export interface SetCodeLensNoteInput {
+export interface SetCodeLensNoteInput extends AnnotationTargetInput {
     id?: string;
-    path?: string;
     range: AnnotationRangeInput;
     title: string;
     mode?: AnnotationMode;
@@ -68,18 +68,19 @@ export interface SetCodeLensNoteInput {
 export interface AnnotationOperationResult {
     id: string;
     paths: string[];
+    uris: string[];
     rangeCount: number;
 }
 
-export interface ClearAnnotationsInput {
+export interface ClearAnnotationsInput extends AnnotationTargetInput {
     id?: string;
-    path?: string;
     all?: boolean;
 }
 
 export interface ClearAnnotationsResult {
     clearedIds: number;
     clearedPaths: string[];
+    clearedUris: string[];
 }
 
 interface HighlightEntry {
@@ -185,30 +186,63 @@ function hasEntries(group: AnnotationGroup): boolean {
     return group.highlights.length > 0 || group.callouts.length > 0 || group.gutterMarkers.length > 0 || group.hoverNotes.length > 0 || group.codeLensNotes.length > 0 || group.explanationComments.length > 0;
 }
 
-function addEntryPaths(paths: Set<string>, group: AnnotationGroup): void {
+function workspacePathIfAvailable(uri: vscode.Uri): string | undefined {
+    return isUriInsideWorkspace(uri) ? uriToWorkspacePath(uri) : undefined;
+}
+
+function addEntryTargets(paths: Set<string>, uris: Set<string>, group: AnnotationGroup): void {
+    const add = (uri: vscode.Uri): void => {
+        const workspacePath = workspacePathIfAvailable(uri);
+        if (workspacePath) {
+            paths.add(workspacePath);
+        }
+        uris.add(uri.toString());
+    };
+
     for (const entry of group.highlights) {
-        paths.add(uriToWorkspacePath(entry.uri));
+        add(entry.uri);
     }
     for (const entry of group.callouts) {
-        paths.add(uriToWorkspacePath(entry.uri));
+        add(entry.uri);
     }
     for (const entry of group.gutterMarkers) {
-        paths.add(uriToWorkspacePath(entry.uri));
+        add(entry.uri);
     }
     for (const entry of group.hoverNotes) {
-        paths.add(uriToWorkspacePath(entry.uri));
+        add(entry.uri);
     }
     for (const entry of group.codeLensNotes) {
-        paths.add(uriToWorkspacePath(entry.uri));
+        add(entry.uri);
     }
     for (const entry of group.explanationComments) {
-        paths.add(uriToWorkspacePath(entry.uri));
+        add(entry.uri);
     }
 }
 
 function operationResult(id: string, entries: Array<HighlightEntry | CalloutEntry | GutterMarkerEntry | HoverNoteEntry | CodeLensNoteEntry | ExplanationCommentEntry>): AnnotationOperationResult {
-    const paths = new Set(entries.map(entry => uriToWorkspacePath(entry.uri)));
-    return { id, paths: Array.from(paths), rangeCount: entries.length };
+    const paths = new Set<string>();
+    const uris = new Set<string>();
+    for (const entry of entries) {
+        const workspacePath = workspacePathIfAvailable(entry.uri);
+        if (workspacePath) {
+            paths.add(workspacePath);
+        }
+        uris.add(entry.uri.toString());
+    }
+    return { id, paths: Array.from(paths), uris: Array.from(uris), rangeCount: entries.length };
+}
+
+function annotationTargetForRange(input: AnnotationTargetInput, range: AnnotationRangeInput): AnnotationTargetInput {
+    if (range.path && range.uri) {
+        throw new Error('Provide either path or uri for an annotation range, not both.');
+    }
+    if (range.uri) {
+        return { uri: range.uri };
+    }
+    if (range.path) {
+        return { path: range.path };
+    }
+    return { path: input.path, uri: input.uri };
 }
 
 function kindThemeColor(kind: AnnotationKind): vscode.ThemeColor {
@@ -358,7 +392,7 @@ export class EditorAnnotationService {
         this.visibleEditorChangeDisposable = vscode.window.onDidChangeVisibleTextEditors(() => this.reapplyDecorations());
         this.codeLensCommandDisposable = acquireCodeLensNoteNoopCommand();
         this.codeLensProviderDisposable = vscode.languages.registerCodeLensProvider(
-            { scheme: 'file' },
+            { scheme: '*' },
             {
                 onDidChangeCodeLenses: this.codeLensChangeEmitter.event,
                 provideCodeLenses: document => this.provideCodeLensNotes(document.uri)
@@ -375,7 +409,7 @@ export class EditorAnnotationService {
         const newEntries: HighlightEntry[] = [];
 
         for (const inputRange of input.ranges) {
-            const target = await resolveEditorTarget({ path: inputRange.path ?? input.path });
+            const target = await resolveEditorTarget(annotationTargetForRange(input, inputRange));
             newEntries.push({ uri: target.uri, range: mcpRangeToVsCodeRange(inputRange), kind });
         }
 
@@ -393,7 +427,7 @@ export class EditorAnnotationService {
         const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
         const existingGroup = this.groups.get(id);
         const nextCallouts = mode === 'add' && existingGroup ? [...existingGroup.callouts] : [];
-        const target = await resolveEditorTarget({ path: input.range.path ?? input.path });
+        const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const editor = target.editor ?? getVisibleEditor(target.uri);
 
         if (!editor) {
@@ -428,13 +462,13 @@ export class EditorAnnotationService {
         const newEntries: GutterMarkerEntry[] = [];
 
         for (const line of input.lines ?? []) {
-            const target = await resolveEditorTarget({ path: input.path });
+            const target = await resolveEditorTarget({ path: input.path, uri: input.uri });
             const range = mcpRangeToVsCodeRange({ start: { line, character: 0 }, end: { line, character: 0 } });
             newEntries.push({ uri: target.uri, option: this.createGutterMarkerOption(range, input.label), kind });
         }
 
         for (const inputRange of input.ranges ?? []) {
-            const target = await resolveEditorTarget({ path: inputRange.path ?? input.path });
+            const target = await resolveEditorTarget(annotationTargetForRange(input, inputRange));
             const range = mcpRangeToVsCodeRange(inputRange);
             newEntries.push({ uri: target.uri, option: this.createGutterMarkerOption(range, input.label), kind });
         }
@@ -457,7 +491,7 @@ export class EditorAnnotationService {
         const kind = input.kind ?? 'info';
         const existingGroup = this.groups.get(id);
         const nextHoverNotes = mode === 'add' && existingGroup ? [...existingGroup.hoverNotes] : [];
-        const target = await resolveEditorTarget({ path: input.range.path ?? input.path });
+        const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const range = mcpRangeToVsCodeRange(input.range);
         const option = this.createHoverNoteOption(range, input.message, input.title);
 
@@ -475,7 +509,7 @@ export class EditorAnnotationService {
         const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
         const existingGroup = this.groups.get(id);
         const nextCodeLensNotes = mode === 'add' && existingGroup ? [...existingGroup.codeLensNotes] : [];
-        const target = await resolveEditorTarget({ path: input.range.path ?? input.path });
+        const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const range = mcpRangeToVsCodeRange(input.range);
 
         const group = getOrCreateGroup(this.groups, id);
@@ -491,7 +525,7 @@ export class EditorAnnotationService {
         const kind = input.kind ?? 'info';
         const existingGroup = this.groups.get(id);
         const nextComments = mode === 'add' && existingGroup ? [...existingGroup.explanationComments] : [];
-        const target = await resolveEditorTarget({ path: input.range.path ?? input.path });
+        const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const range = mcpRangeToVsCodeRange(input.range);
         const thread = this.createExplanationCommentThread(target.uri, range, input.title, input.body, kind);
 
@@ -507,20 +541,21 @@ export class EditorAnnotationService {
 
     public async clearAnnotations(input: ClearAnnotationsInput = {}): Promise<ClearAnnotationsResult> {
         const clearedPaths = new Set<string>();
+        const clearedUris = new Set<string>();
         let clearedIds = 0;
-        const pathFilter = input.path ? await resolveEditorTarget({ path: input.path }) : undefined;
-        const pathKey = pathFilter?.uri.toString();
-        const pathLabel = pathFilter ? uriToWorkspacePath(pathFilter.uri) : undefined;
+        const targetFilter = input.path || input.uri ? await resolveEditorTarget({ path: input.path, uri: input.uri }) : undefined;
+        const targetKey = targetFilter?.uri.toString();
+        const targetPath = targetFilter ? workspacePathIfAvailable(targetFilter.uri) : undefined;
 
         if (input.all) {
             clearedIds = this.groups.size;
             for (const group of this.groups.values()) {
-                addEntryPaths(clearedPaths, group);
+                addEntryTargets(clearedPaths, clearedUris, group);
                 this.disposeCommentEntries(group.explanationComments);
             }
             this.groups.clear();
         } else {
-            const targetId = input.id ?? (input.path ? undefined : DEFAULT_ANNOTATION_ID);
+            const targetId = input.id ?? (targetKey ? undefined : DEFAULT_ANNOTATION_ID);
             const groupsToClear = targetId ? [[targetId, this.groups.get(targetId)] as const] : Array.from(this.groups.entries());
 
             for (const [id, group] of groupsToClear) {
@@ -528,22 +563,23 @@ export class EditorAnnotationService {
                     continue;
                 }
 
-                if (pathKey) {
+                if (targetKey) {
                     const beforeCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.hoverNotes.length + group.codeLensNotes.length + group.explanationComments.length;
-                    group.highlights = group.highlights.filter(entry => entry.uri.toString() !== pathKey);
-                    group.callouts = group.callouts.filter(entry => entry.uri.toString() !== pathKey);
-                    group.gutterMarkers = group.gutterMarkers.filter(entry => entry.uri.toString() !== pathKey);
-                    group.hoverNotes = group.hoverNotes.filter(entry => entry.uri.toString() !== pathKey);
-                    group.codeLensNotes = group.codeLensNotes.filter(entry => entry.uri.toString() !== pathKey);
-                    const removedComments = group.explanationComments.filter(entry => entry.uri.toString() === pathKey);
+                    group.highlights = group.highlights.filter(entry => entry.uri.toString() !== targetKey);
+                    group.callouts = group.callouts.filter(entry => entry.uri.toString() !== targetKey);
+                    group.gutterMarkers = group.gutterMarkers.filter(entry => entry.uri.toString() !== targetKey);
+                    group.hoverNotes = group.hoverNotes.filter(entry => entry.uri.toString() !== targetKey);
+                    group.codeLensNotes = group.codeLensNotes.filter(entry => entry.uri.toString() !== targetKey);
+                    const removedComments = group.explanationComments.filter(entry => entry.uri.toString() === targetKey);
                     this.disposeCommentEntries(removedComments);
-                    group.explanationComments = group.explanationComments.filter(entry => entry.uri.toString() !== pathKey);
+                    group.explanationComments = group.explanationComments.filter(entry => entry.uri.toString() !== targetKey);
                     const afterCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.hoverNotes.length + group.codeLensNotes.length + group.explanationComments.length;
 
                     if (beforeCount !== afterCount) {
-                        if (pathLabel) {
-                            clearedPaths.add(pathLabel);
+                        if (targetPath) {
+                            clearedPaths.add(targetPath);
                         }
+                        clearedUris.add(targetKey);
                         clearedIds += 1;
                     }
                     if (!hasEntries(group)) {
@@ -551,7 +587,7 @@ export class EditorAnnotationService {
                     }
                 } else if (this.groups.delete(id)) {
                     clearedIds += 1;
-                    addEntryPaths(clearedPaths, group);
+                    addEntryTargets(clearedPaths, clearedUris, group);
                     this.disposeCommentEntries(group.explanationComments);
                 }
             }
@@ -563,7 +599,7 @@ export class EditorAnnotationService {
         this.applyHoverNotes();
         this.codeLensChangeEmitter.fire();
 
-        return { clearedIds, clearedPaths: Array.from(clearedPaths) };
+        return { clearedIds, clearedPaths: Array.from(clearedPaths), clearedUris: Array.from(clearedUris) };
     }
 
     private getCommentController(): vscode.CommentController {

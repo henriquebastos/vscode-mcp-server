@@ -11,6 +11,7 @@ suite('MCPServer Tool Setup', () => {
 
     test('disposes editor annotation service when the MCP server stops', async () => {
         const disposeEditorAnnotationService = sinon.spy();
+        const disposeEditorDiffService = sinon.spy();
         const serverModule = proxyquire('../server', {
             '@modelcontextprotocol/sdk/server/mcp.js': {
                 McpServer: class {
@@ -25,6 +26,7 @@ suite('MCPServer Tool Setup', () => {
                 }
             },
             './editor/annotation-service': { disposeEditorAnnotationService },
+            './editor/diff-service': { disposeEditorDiffService },
             './utils/logger': {
                 logger: {
                     info: sinon.spy(),
@@ -46,6 +48,7 @@ suite('MCPServer Tool Setup', () => {
         await server.stop();
 
         assert.strictEqual(disposeEditorAnnotationService.calledOnce, true, 'annotation service was not disposed on stop');
+        assert.strictEqual(disposeEditorDiffService.calledOnce, true, 'diff service was not disposed on stop');
     });
 
     test('registers editor tools independently of file listing callback and respects disabled config', () => {

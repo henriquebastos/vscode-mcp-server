@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { disposeEditorAnnotationService } from '../editor/annotation-service';
+import { disposeEditorDiffService } from '../editor/diff-service';
 import { registerEditorTools } from '../tools/editor-tools';
 
 suite('Editor MCP Tools', () => {
@@ -11,6 +12,7 @@ suite('Editor MCP Tools', () => {
 
     teardown(() => {
         disposeEditorAnnotationService();
+        disposeEditorDiffService();
         sinon.restore();
     });
 
@@ -25,6 +27,28 @@ suite('Editor MCP Tools', () => {
         registerEditorTools(server as any);
         return registeredTools;
     }
+
+    test('registers open_diff_code and returns a native changes editor diff result', async () => {
+        const leftUri = vscode.Uri.file('/workspace/src/old.ts');
+        const rightUri = vscode.Uri.file('/workspace/src/new.ts');
+        const executeCommandStub = sinon.stub(vscode.commands, 'executeCommand').resolves();
+
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'open_diff_code');
+        assert.ok(tool, 'open_diff_code was not registered');
+
+        const result = await tool.handler({
+            title: 'Review diff',
+            entries: [{ label: 'old vs new', leftUri: leftUri.toString(), rightUri: rightUri.toString() }]
+        });
+        const payload = JSON.parse(result.content[0].text);
+
+        assert.ok(payload.diffId.startsWith('diff-'));
+        assert.strictEqual(payload.title, 'Review diff');
+        assert.strictEqual(payload.count, 1);
+        assert.deepStrictEqual(payload.entries, [{ label: 'old vs new', leftUri: leftUri.toString(), rightUri: rightUri.toString() }]);
+        assert.strictEqual(executeCommandStub.firstCall.args[0], 'vscode.changes');
+    });
 
     test('registers get_editor_context_code and returns serialized editor context', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');

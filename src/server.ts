@@ -10,6 +10,7 @@ import { registerShellTools } from './tools/shell-tools';
 import { registerDiagnosticsTools } from './tools/diagnostics-tools';
 import { registerSymbolTools } from './tools/symbol-tools';
 import { disposeEditorAnnotationService } from './editor/annotation-service';
+import { disposeEditorDiffService } from './editor/diff-service';
 import { registerEditorTools } from './tools/editor-tools';
 import { logger } from './utils/logger';
 
@@ -128,6 +129,7 @@ export class MCPServer {
             logger.info('MCP editor tools registered successfully');
         } else {
             disposeEditorAnnotationService();
+            disposeEditorDiffService();
             logger.info('MCP editor tools disabled by configuration');
         }
     }
@@ -315,6 +317,7 @@ export class MCPServer {
             throw error;
         } finally {
             disposeEditorAnnotationService();
+            disposeEditorDiffService();
         }
     }
 }

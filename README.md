@@ -98,6 +98,7 @@ The VS Code MCP Server extension implements an MCP-compliant server that allows 
 - **Check for diagnostics** (errors and warnings) in your workspace
 - **Execute shell commands** in the integrated terminal with shell integration
 - **Toggle the server** on and off via a status bar item
+- **Open native VS Code diffs** from URI sources or explicit file-pair entries, then annotate the returned document URIs
 
 This extension enables AI assistants and other tools to interact with your VS Code workspace through the standardized MCP protocol.
 
@@ -216,15 +217,16 @@ The extension creates an MCP server that:
   - Finding all symbols of specific types within a file
 
 ### Editor Tools
-- **get_editor_context_code**: Returns the current VS Code editor context, including active editor metadata, selections, visible ranges, optional selected text, and optional visible editors.
+- **open_diff_code**: Opens VS Code's native changes editor from either source-mode `leftUri`/`rightUri` inputs or explicit file-pair `entries`. Supports workspace `file:` sources, `git+file:` sources with `?ref=...`, existing `git:` document URIs, include/exclude filters, max-file guards, and one-sided added/deleted entries without a public status field.
+- **get_editor_context_code**: Returns the current VS Code editor context, including active editor document URIs, safe workspace paths when available, selections, visible ranges, optional selected text, optional visible editors, and best-effort diff entry metadata when an editor matches an opened diff.
 - **reveal_range_code**: Reveals a precise range in VS Code without selecting text.
-- **set_highlight_code**: Sets temporary visual highlights over one or more precise ranges, grouped by annotation id.
-- **set_inline_callout_code**: Shows a visible inline title and message next to a precise range.
-- **set_codelens_note_code**: Adds a temporary short CodeLens step or role label above a precise range.
-- **set_hover_note_code**: Adds a temporary squiggle-underlined hover note on a precise range.
-- **set_gutter_marker_code**: Adds temporary gutter markers anchored to lines or ranges.
-- **set_explanation_comment_code**: Adds a temporary Guided Explanation comment thread for longer anchored notes.
-- **clear_annotations_code**: Clears temporary highlights, inline callouts, CodeLens notes, hover notes, gutter markers, and Guided Explanation comments by id, path, or globally.
+- **set_highlight_code**: Sets temporary visual highlights over one or more precise ranges, grouped by annotation id. Targets may use either a workspace `path` or a document `uri` returned by `open_diff_code`.
+- **set_inline_callout_code**: Shows a visible inline title and message next to a precise range. Supports `path` or `uri` targeting.
+- **set_codelens_note_code**: Adds a temporary short CodeLens step or role label above a precise range. Supports `path` or `uri` targeting.
+- **set_hover_note_code**: Adds a temporary squiggle-underlined hover note on a precise range. Supports `path` or `uri` targeting.
+- **set_gutter_marker_code**: Adds temporary gutter markers anchored to lines or ranges. Supports `path` or `uri` targeting.
+- **set_explanation_comment_code**: Adds a temporary Guided Explanation comment thread for longer anchored notes. Supports `path` or `uri` targeting where VS Code comment threads are available.
+- **clear_annotations_code**: Clears temporary highlights, inline callouts, CodeLens notes, hover notes, gutter markers, and Guided Explanation comments by id, path, URI, or globally.
 - **go_to_definition_code**: Navigates VS Code to the first symbol definition and returns the resulting location.
 
 ### Shell Tools

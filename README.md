@@ -220,7 +220,11 @@ The extension creates an MCP server that:
 - **reveal_range_code**: Reveals a precise range in VS Code without selecting text.
 - **set_highlight_code**: Sets temporary visual highlights over one or more precise ranges, grouped by annotation id.
 - **set_inline_callout_code**: Shows a visible inline title and message next to a precise range.
-- **clear_annotations_code**: Clears temporary highlights and callouts by id, path, or globally.
+- **set_codelens_note_code**: Adds a temporary short CodeLens step or role label above a precise range.
+- **set_hover_note_code**: Adds a temporary squiggle-underlined hover note on a precise range.
+- **set_gutter_marker_code**: Adds temporary gutter markers anchored to lines or ranges.
+- **set_explanation_comment_code**: Adds a temporary Guided Explanation comment thread for longer anchored notes.
+- **clear_annotations_code**: Clears temporary highlights, inline callouts, CodeLens notes, hover notes, gutter markers, and Guided Explanation comments by id, path, or globally.
 - **go_to_definition_code**: Navigates VS Code to the first symbol definition and returns the resulting location.
 
 ### Shell Tools

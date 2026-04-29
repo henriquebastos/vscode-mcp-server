@@ -65,6 +65,15 @@ interface SetHoverNoteToolInput {
     kind?: AnnotationKind;
 }
 
+interface SetCodeLensNoteToolInput {
+    id?: string;
+    path?: string;
+    range: AnnotationRangeInput;
+    title: string;
+    mode?: AnnotationMode;
+    kind?: AnnotationKind;
+}
+
 interface ClearAnnotationsToolInput {
     id?: string;
     path?: string;
@@ -157,7 +166,7 @@ export function registerEditorTools(server: McpServer): void {
 
     server.tool(
         'clear_annotations_code',
-        `Clears temporary editor annotations, including highlights, inline callouts, hover notes, gutter markers, overview-ruler markers, and Guided Explanation comments.
+        `Clears temporary editor annotations, including highlights, inline callouts, CodeLens notes, hover notes, gutter markers, overview-ruler markers, and Guided Explanation comments.
 
         WHEN TO USE: Remove stale visual focus before moving to a new explanation. By default clears
         id=current. Provide id to clear one group, path to limit clearing to a file, or all=true to clear everything.`,
@@ -240,6 +249,42 @@ export function registerEditorTools(server: McpServer): void {
                 lines,
                 ranges,
                 label,
+                kind,
+                mode
+            });
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }
+                ]
+            };
+        }
+    );
+
+    server.tool(
+        'set_codelens_note_code',
+        `Sets a temporary visible CodeLens note above a precise code range.
+
+        WHEN TO USE: Add a short walkthrough step label or role label without editing source
+        text or crowding the code line. Notes are grouped by id, default to current, and are
+        cleared by clear_annotations_code. Labels are visible when CodeLens is enabled in VS Code.`,
+        {
+            id: z.string().optional().default('current').describe('Annotation group id. Defaults to current.'),
+            path: z.string().optional().describe('Workspace-relative path. Defaults to active editor.'),
+            range: annotationRangeSchema.describe('Precise range the CodeLens note labels'),
+            title: z.string().describe('Short visible CodeLens label, such as "Step 1: schema" or "Caller"'),
+            kind: annotationKindSchema.optional().default('focus').describe('Semantic intent for the note'),
+            mode: z.enum(['replace', 'add']).optional().default('replace').describe('Replace or add to CodeLens notes for the id')
+        },
+        async ({ id, path, range, title, kind = 'focus', mode = 'replace' }: SetCodeLensNoteToolInput): Promise<CallToolResult> => {
+            const result = await getEditorAnnotationService().setCodeLensNote({
+                id,
+                path,
+                range,
+                title,
                 kind,
                 mode
             });

@@ -188,6 +188,38 @@ suite('Editor MCP Tools', () => {
         assert.strictEqual(payload.rangeCount, 1);
     });
 
+    test('registers set_codelens_note_code and returns note summary', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const codeLensProviderDisposable = { dispose: sinon.spy() } as unknown as vscode.Disposable;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').returns(codeLensProviderDisposable);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'set_codelens_note_code');
+        assert.ok(tool, 'set_codelens_note_code was not registered');
+
+        const result = await tool.handler({
+            title: 'Step 1: schema',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }
+        });
+        const payload = JSON.parse(result.content[0].text);
+
+        assert.strictEqual(payload.id, 'current');
+        assert.deepStrictEqual(payload.paths, ['src/example.ts']);
+        assert.strictEqual(payload.rangeCount, 1);
+    });
+
     test('registers set_explanation_comment_code and returns comment summary', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const documentUri = vscode.Uri.file('/workspace/src/example.ts');

@@ -5,15 +5,38 @@ import { disposeEditorAnnotationService, EditorAnnotationService } from '../edit
 
 suite('Editor Annotation Service', () => {
     let onDidChangeVisibleTextEditorsStub: sinon.SinonStub;
+    let annotationServices: EditorAnnotationService[] = [];
 
     setup(() => {
+        annotationServices = [];
         onDidChangeVisibleTextEditorsStub = sinon.stub(vscode.window, 'onDidChangeVisibleTextEditors').returns({ dispose: sinon.spy() } as unknown as vscode.Disposable);
     });
 
     teardown(() => {
+        for (const service of [...annotationServices].reverse()) {
+            service.dispose();
+        }
+        annotationServices = [];
         disposeEditorAnnotationService();
         sinon.restore();
     });
+
+    function createAnnotationService(): EditorAnnotationService {
+        const service = new EditorAnnotationService();
+        let disposed = false;
+        const originalDispose = service.dispose.bind(service);
+        service.dispose = () => {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            originalDispose();
+            annotationServices = annotationServices.filter(candidate => candidate !== service);
+        };
+        annotationServices.push(service);
+
+        return service;
+    }
 
     test('applies kinded highlights with overview ruler styling without changing selection', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
@@ -36,7 +59,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setHighlights({
             kind: 'warning',
@@ -66,7 +89,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setHighlights({
             kind: 'related',
@@ -101,7 +124,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setHoverNote({
             kind: 'info',
@@ -126,6 +149,362 @@ suite('Editor Annotation Service', () => {
         assert.strictEqual(hover.value.includes('file://'), false, 'unsafe link scheme was not stripped');
     });
 
+    test('provides CodeLens notes for the target document with a harmless command', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const originalSelection = new vscode.Selection(0, 0, 0, 0);
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: originalSelection,
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        let codeLensProvider: vscode.CodeLensProvider | undefined;
+        const registerCodeLensProviderStub = sinon.stub(vscode.languages, 'registerCodeLensProvider').callsFake((_selector, provider) => {
+            codeLensProvider = provider as vscode.CodeLensProvider;
+            return { dispose: sinon.spy() };
+        });
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        await service.setCodeLensNote({
+            range: { start: { line: 2, character: 4 }, end: { line: 2, character: 10 } },
+            title: 'Step 1: schema'
+        });
+
+        assert.strictEqual(registerCodeLensProviderStub.calledOnce, true, 'CodeLens provider was not registered');
+        assert.ok(codeLensProvider, 'CodeLens provider was not captured');
+        const tokenSource = new vscode.CancellationTokenSource();
+        const codeLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: documentUri } as vscode.TextDocument, tokenSource.token));
+        tokenSource.dispose();
+
+        assert.strictEqual(codeLenses?.length, 1);
+        assert.strictEqual(codeLenses[0].range.start.line, 1);
+        assert.strictEqual(codeLenses[0].range.start.character, 4);
+        assert.strictEqual(codeLenses[0].command?.title, 'Step 1: schema');
+        assert.strictEqual(codeLenses[0].command?.command, 'vscode-mcp-server.codelensNote.noop');
+        assert.strictEqual(activeEditor.selection, originalSelection);
+    });
+
+    test('registers CodeLens no-op command and disposes it with the service', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        let codeLensProvider: vscode.CodeLensProvider | undefined;
+        let noOpHandler: (() => unknown) | undefined;
+        const commandDisposable = { dispose: sinon.spy() } as unknown as vscode.Disposable;
+        const registerCommandStub = sinon.stub(vscode.commands, 'registerCommand').callsFake((command: string, callback: (...args: unknown[]) => unknown) => {
+            if (command === 'vscode-mcp-server.codelensNote.noop') {
+                noOpHandler = () => callback();
+            }
+            return commandDisposable;
+        });
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').callsFake((_selector, provider) => {
+            codeLensProvider = provider as vscode.CodeLensProvider;
+            return { dispose: sinon.spy() };
+        });
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        await service.setCodeLensNote({
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Step 1'
+        });
+        assert.ok(codeLensProvider, 'CodeLens provider was not captured');
+        const tokenSource = new vscode.CancellationTokenSource();
+        const codeLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: documentUri } as vscode.TextDocument, tokenSource.token));
+        tokenSource.dispose();
+
+        assert.strictEqual(registerCommandStub.calledWith('vscode-mcp-server.codelensNote.noop'), true);
+        assert.strictEqual(codeLenses?.[0].command?.command, 'vscode-mcp-server.codelensNote.noop');
+        assert.strictEqual(noOpHandler?.(), undefined);
+
+        service.dispose();
+
+        assert.strictEqual((commandDisposable.dispose as sinon.SinonSpy).calledOnce, true);
+    });
+
+    test('adds and replaces CodeLens notes by id without changing selection', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const originalSelection = new vscode.Selection(0, 0, 0, 0);
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: originalSelection,
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        let codeLensProvider: vscode.CodeLensProvider | undefined;
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').callsFake((_selector, provider) => {
+            codeLensProvider = provider as vscode.CodeLensProvider;
+            return { dispose: sinon.spy() };
+        });
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        await service.setCodeLensNote({
+            id: 'walkthrough',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Step 1: schema'
+        });
+        const added = await service.setCodeLensNote({
+            id: 'walkthrough',
+            mode: 'add',
+            kind: 'question',
+            range: { start: { line: 2, character: 0 }, end: { line: 2, character: 4 } },
+            title: 'Question to revisit'
+        });
+
+        assert.strictEqual(added.rangeCount, 2);
+        assert.ok(codeLensProvider, 'CodeLens provider was not captured');
+        const tokenSource = new vscode.CancellationTokenSource();
+        const additiveLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: documentUri } as vscode.TextDocument, tokenSource.token));
+        assert.deepStrictEqual(additiveLenses?.map(lens => lens.command?.title), ['Step 1: schema', 'Question to revisit']);
+        assert.strictEqual(additiveLenses?.[1].command?.tooltip, 'Guided explanation question note');
+
+        const replaced = await service.setCodeLensNote({
+            id: 'walkthrough',
+            range: { start: { line: 3, character: 0 }, end: { line: 3, character: 4 } },
+            title: 'Replacement step'
+        });
+        const replacementLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: documentUri } as vscode.TextDocument, tokenSource.token));
+        tokenSource.dispose();
+
+        assert.strictEqual(replaced.rangeCount, 1);
+        assert.strictEqual(replacementLenses?.length, 1);
+        assert.strictEqual(replacementLenses?.[0].command?.title, 'Replacement step');
+        assert.strictEqual(replacementLenses?.[0].range.start.line, 2);
+        assert.strictEqual(activeEditor.selection, originalSelection);
+    });
+
+    test('CodeLens replace mode preserves other annotation surfaces for the same id', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const setDecorationsSpy = sinon.spy();
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: setDecorationsSpy
+        } as unknown as vscode.TextEditor;
+        let visibleEditorsChangeListener: ((editors: readonly vscode.TextEditor[]) => void) | undefined;
+        let codeLensProvider: vscode.CodeLensProvider | undefined;
+        const highlightDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const calloutDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const createDecorationTypeStub = sinon.stub(vscode.window, 'createTextEditorDecorationType');
+        createDecorationTypeStub.onFirstCall().returns(highlightDecorationType);
+        createDecorationTypeStub.onSecondCall().returns(calloutDecorationType);
+        onDidChangeVisibleTextEditorsStub.callsFake((listener: (editors: readonly vscode.TextEditor[]) => void) => {
+            visibleEditorsChangeListener = listener;
+            return { dispose: sinon.spy() };
+        });
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').callsFake((_selector, provider) => {
+            codeLensProvider = provider as vscode.CodeLensProvider;
+            return { dispose: sinon.spy() };
+        });
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        await service.setHighlights({
+            id: 'walkthrough',
+            ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
+        });
+        await service.setCodeLensNote({
+            id: 'walkthrough',
+            range: { start: { line: 2, character: 0 }, end: { line: 2, character: 4 } },
+            title: 'First step'
+        });
+        await service.setCodeLensNote({
+            id: 'walkthrough',
+            range: { start: { line: 3, character: 0 }, end: { line: 3, character: 4 } },
+            title: 'Replacement step'
+        });
+
+        assert.ok(visibleEditorsChangeListener, 'visible editor change listener was not registered');
+        visibleEditorsChangeListener([activeEditor]);
+        const lastHighlightCall = setDecorationsSpy.getCalls().filter(call => call.args[0] === highlightDecorationType).at(-1);
+        assert.ok(lastHighlightCall, 'highlights were not reapplied after CodeLens replacement');
+        assert.strictEqual(lastHighlightCall.args[1].length, 1);
+        assert.strictEqual(lastHighlightCall.args[1][0].start.line, 0);
+        assert.ok(codeLensProvider, 'CodeLens provider was not captured');
+        const tokenSource = new vscode.CancellationTokenSource();
+        const codeLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: documentUri } as vscode.TextDocument, tokenSource.token));
+        tokenSource.dispose();
+        assert.deepStrictEqual(codeLenses?.map(lens => lens.command?.title), ['Replacement step']);
+    });
+
+    test('provides CodeLens notes for explicit paths when files are not visible', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const activeUri = vscode.Uri.file('/workspace/src/active.ts');
+        const firstUri = vscode.Uri.file('/workspace/src/first.ts');
+        const secondUri = vscode.Uri.file('/workspace/src/second.ts');
+        const activeEditor = {
+            document: { uri: activeUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        let codeLensProvider: vscode.CodeLensProvider | undefined;
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').callsFake((_selector, provider) => {
+            codeLensProvider = provider as vscode.CodeLensProvider;
+            return { dispose: sinon.spy() };
+        });
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        await service.setCodeLensNote({
+            id: 'flow',
+            path: 'src/first.ts',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Caller'
+        });
+        const added = await service.setCodeLensNote({
+            id: 'flow',
+            mode: 'add',
+            range: { path: 'src/second.ts', start: { line: 2, character: 1 }, end: { line: 2, character: 5 } },
+            title: 'Definition'
+        });
+
+        assert.deepStrictEqual(added.paths, ['src/first.ts', 'src/second.ts']);
+        assert.ok(codeLensProvider, 'CodeLens provider was not captured');
+        const tokenSource = new vscode.CancellationTokenSource();
+        const firstLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: firstUri } as vscode.TextDocument, tokenSource.token));
+        const secondLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: secondUri } as vscode.TextDocument, tokenSource.token));
+        tokenSource.dispose();
+
+        assert.deepStrictEqual(firstLenses?.map(lens => lens.command?.title), ['Caller']);
+        assert.deepStrictEqual(secondLenses?.map(lens => lens.command?.title), ['Definition']);
+        assert.strictEqual(secondLenses?.[0].range.start.line, 1);
+        assert.strictEqual(secondLenses?.[0].range.start.character, 1);
+    });
+
+    test('clears CodeLens notes by id while preserving other ids and refreshing the provider', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        let codeLensProvider: vscode.CodeLensProvider | undefined;
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').callsFake((_selector, provider) => {
+            codeLensProvider = provider as vscode.CodeLensProvider;
+            return { dispose: sinon.spy() };
+        });
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        assert.ok(codeLensProvider, 'CodeLens provider was not captured');
+        let refreshCount = 0;
+        const refreshDisposable = codeLensProvider.onDidChangeCodeLenses?.(() => {
+            refreshCount += 1;
+        });
+        await service.setCodeLensNote({
+            id: 'flow',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Step 1'
+        });
+        await service.setCodeLensNote({
+            id: 'keep',
+            range: { start: { line: 2, character: 0 }, end: { line: 2, character: 4 } },
+            title: 'Keep me'
+        });
+
+        const result = await service.clearAnnotations({ id: 'flow' });
+        const tokenSource = new vscode.CancellationTokenSource();
+        const remainingLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: documentUri } as vscode.TextDocument, tokenSource.token));
+        tokenSource.dispose();
+        refreshDisposable?.dispose();
+
+        assert.strictEqual(result.clearedIds, 1);
+        assert.deepStrictEqual(result.clearedPaths, ['src/example.ts']);
+        assert.deepStrictEqual(remainingLenses?.map(lens => lens.command?.title), ['Keep me']);
+        assert.strictEqual(refreshCount, 3);
+    });
+
+    test('clears CodeLens notes by path and globally', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const firstUri = vscode.Uri.file('/workspace/src/first.ts');
+        const secondUri = vscode.Uri.file('/workspace/src/second.ts');
+        const activeEditor = {
+            document: { uri: firstUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        let codeLensProvider: vscode.CodeLensProvider | undefined;
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').callsFake((_selector, provider) => {
+            codeLensProvider = provider as vscode.CodeLensProvider;
+            return { dispose: sinon.spy() };
+        });
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+        await service.setCodeLensNote({
+            id: 'flow',
+            path: 'src/first.ts',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Remove first'
+        });
+        await service.setCodeLensNote({
+            id: 'flow',
+            mode: 'add',
+            path: 'src/second.ts',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Keep second'
+        });
+
+        const pathResult = await service.clearAnnotations({ path: 'src/first.ts' });
+        assert.ok(codeLensProvider, 'CodeLens provider was not captured');
+        const tokenSource = new vscode.CancellationTokenSource();
+        const firstAfterPathClear = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: firstUri } as vscode.TextDocument, tokenSource.token));
+        const secondAfterPathClear = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: secondUri } as vscode.TextDocument, tokenSource.token));
+
+        assert.strictEqual(pathResult.clearedIds, 1);
+        assert.deepStrictEqual(pathResult.clearedPaths, ['src/first.ts']);
+        assert.deepStrictEqual(firstAfterPathClear?.map(lens => lens.command?.title), []);
+        assert.deepStrictEqual(secondAfterPathClear?.map(lens => lens.command?.title), ['Keep second']);
+
+        const allResult = await service.clearAnnotations({ all: true });
+        const secondAfterGlobalClear = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: secondUri } as vscode.TextDocument, tokenSource.token));
+        tokenSource.dispose();
+
+        assert.strictEqual(allResult.clearedIds, 1);
+        assert.deepStrictEqual(allResult.clearedPaths, ['src/second.ts']);
+        assert.deepStrictEqual(secondAfterGlobalClear?.map(lens => lens.command?.title), []);
+    });
+
     test('path-limited clear removes both highlights and callouts for the id', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const documentUri = vscode.Uri.file('/workspace/src/example.ts');
@@ -147,7 +526,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
         await service.setHighlights({
             id: 'current',
             ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
@@ -213,7 +592,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(firstEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([firstEditor, secondEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
         await service.setHighlights({
             id: 'flow',
             path: 'src/first.ts',
@@ -321,7 +700,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(firstEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').get(() => visibleEditors);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
         await service.setHighlights({
             path: 'src/second.ts',
             ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
@@ -336,7 +715,7 @@ suite('Editor Annotation Service', () => {
         assert.strictEqual(reapplyCall.args[1].length, 1);
     });
 
-    test('dispose releases decoration types, comments, and controller state', async () => {
+    test('dispose releases decoration types, comments, CodeLens provider, and controller state', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const documentUri = vscode.Uri.file('/workspace/src/example.ts');
         const activeEditor = {
@@ -347,10 +726,12 @@ suite('Editor Annotation Service', () => {
         const highlightDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
         const calloutDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
         const gutterDecorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const codeLensProviderDisposable = { dispose: sinon.spy() } as unknown as vscode.Disposable;
         const createDecorationTypeStub = sinon.stub(vscode.window, 'createTextEditorDecorationType');
         createDecorationTypeStub.onFirstCall().returns(highlightDecorationType);
         createDecorationTypeStub.onSecondCall().returns(calloutDecorationType);
         createDecorationTypeStub.onThirdCall().returns(gutterDecorationType);
+        sinon.stub(vscode.languages, 'registerCodeLensProvider').returns(codeLensProviderDisposable);
         const thread = { dispose: sinon.spy(), canReply: true } as unknown as vscode.CommentThread;
         const controller = {
             id: 'guided-explanation',
@@ -363,12 +744,16 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
         await service.setGutterMarkers({ lines: [1] });
         await service.setExplanationComment({
             range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
             title: 'Dispose me',
             body: 'Temporary note.'
+        });
+        await service.setCodeLensNote({
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
+            title: 'Dispose CodeLens'
         });
 
         service.dispose();
@@ -376,6 +761,7 @@ suite('Editor Annotation Service', () => {
         assert.strictEqual((highlightDecorationType.dispose as sinon.SinonSpy).calledOnce, true);
         assert.strictEqual((calloutDecorationType.dispose as sinon.SinonSpy).calledOnce, true);
         assert.strictEqual((gutterDecorationType.dispose as sinon.SinonSpy).calledOnce, true);
+        assert.strictEqual((codeLensProviderDisposable.dispose as sinon.SinonSpy).calledOnce, true);
         assert.strictEqual((thread.dispose as sinon.SinonSpy).calledOnce, true);
         assert.strictEqual((controller.dispose as sinon.SinonSpy).calledOnce, true);
     });
@@ -409,7 +795,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
         await service.setGutterMarkers({ id: 'flow', lines: [1] });
         await service.setExplanationComment({
             id: 'flow',
@@ -464,7 +850,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
         await service.setGutterMarkers({ id: 'flow', lines: [1] });
         await service.setExplanationComment({
             id: 'flow',
@@ -502,7 +888,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
         await service.setHighlights({
             id: 'current',
             ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
@@ -553,7 +939,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setExplanationComment({
             kind: 'question',
@@ -606,7 +992,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setExplanationComment({
             range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
@@ -665,7 +1051,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setExplanationComment({
             range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } },
@@ -705,7 +1091,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setGutterMarkers({ id: 'focus-marker', kind: 'focus', lines: [1] });
         await service.setGutterMarkers({ id: 'warning-marker', kind: 'warning', lines: [2] });
@@ -741,7 +1127,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setGutterMarkers({
             kind: 'warning',
@@ -780,7 +1166,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setGutterMarkers({ lines: [1] });
         await service.setGutterMarkers({
@@ -824,7 +1210,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setInlineCallout({
             kind: 'question',
@@ -864,7 +1250,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setInlineCallout({
             range: { start: { line: 2, character: 4 }, end: { line: 2, character: 10 } },
@@ -898,7 +1284,7 @@ suite('Editor Annotation Service', () => {
         sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
         sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
 
-        const service = new EditorAnnotationService();
+        const service = createAnnotationService();
 
         await service.setHighlights({
             ranges: [

@@ -10,6 +10,7 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
 - reveal without selection mutation
 - multi-range highlights
 - inline callouts visible without hover
+- CodeLens step or role labels visible above code lines
 - semantic annotation kinds
 - temporary gutter markers
 - squiggle-underlined hover notes
@@ -64,6 +65,7 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
    - `vscode_reveal_range_code`
    - `vscode_set_highlight_code`
    - `vscode_set_inline_callout_code`
+   - `vscode_set_codelens_note_code`
    - `vscode_set_hover_note_code`
    - `vscode_set_gutter_marker_code`
    - `vscode_set_explanation_comment_code`
@@ -74,7 +76,7 @@ Run a real agent-guided walkthrough where the agent explains the implementation 
 
 Ask the agent:
 
-> Use the guided-code-explanation skill. Explain the guided editor primitives implementation in this repo visually in VS Code. Start at the editor tool registration point, then pause and ask me where to go next. Use reveal, highlights, inline callouts, clear stale annotations, and definition navigation. Keep it collaborative and iterative.
+> Use the guided-code-explanation skill. Explain the guided editor primitives implementation in this repo visually in VS Code. Start at the editor tool registration point, then pause and ask me where to go next. Use reveal, highlights, CodeLens step labels, inline callouts, clear stale annotations, and definition navigation. Keep it collaborative and iterative.
 
 ## Demo script
 
@@ -368,7 +370,7 @@ End with:
 vscode_clear_annotations_code({ "all": true })
 ```
 
-Expected: all temporary highlights, inline callouts, hover notes, gutter markers, overview-ruler markers, and Guided Explanation comments disappear.
+Expected: all temporary highlights, inline callouts, CodeLens notes, hover notes, gutter markers, overview-ruler markers, and Guided Explanation comments disappear.
 
 ## Success criteria
 

@@ -52,6 +52,35 @@ suite('Editor Annotation Service', () => {
         assert.strictEqual(activeEditor.selection, originalSelection);
     });
 
+    test('related highlights use background only without underline or outline', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const createDecorationTypeStub = sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = new EditorAnnotationService();
+
+        await service.setHighlights({
+            kind: 'related',
+            ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
+        });
+
+        const relatedOptions = createDecorationTypeStub.thirdCall.args[0] as vscode.DecorationRenderOptions;
+        assert.strictEqual(relatedOptions.backgroundColor, 'rgba(96, 165, 250, 0.10)');
+        assert.strictEqual(relatedOptions.border, undefined);
+        assert.strictEqual(relatedOptions.borderColor, undefined);
+        assert.strictEqual(relatedOptions.textDecoration, undefined);
+        assert.ok(relatedOptions.overviewRulerColor, 'related highlight omitted overview ruler color');
+    });
+
     test('path-limited clear removes both highlights and callouts for the id', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const documentUri = vscode.Uri.file('/workspace/src/example.ts');
@@ -598,6 +627,35 @@ suite('Editor Annotation Service', () => {
         assert.ok(hover instanceof vscode.MarkdownString, 'marker label was not converted to MarkdownString');
         assert.strictEqual(hover.isTrusted, false);
         assert.ok(hover.value.includes('\\*\\*not bold\\*\\*'), 'marker label markdown was not escaped');
+    });
+
+    test('gutter markers align icon color with highlight kind', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const createDecorationTypeStub = sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = new EditorAnnotationService();
+
+        await service.setGutterMarkers({ id: 'focus-marker', kind: 'focus', lines: [1] });
+        await service.setGutterMarkers({ id: 'warning-marker', kind: 'warning', lines: [2] });
+
+        const gutterIconPaths = createDecorationTypeStub.getCalls()
+            .map(call => call.args[0] as vscode.DecorationRenderOptions)
+            .filter(options => options.gutterIconPath)
+            .map(options => options.gutterIconPath?.toString());
+        assert.strictEqual(gutterIconPaths.length, 2);
+        assert.notStrictEqual(gutterIconPaths[0], gutterIconPaths[1]);
+        assert.ok(gutterIconPaths[0]?.includes('facc15'), 'focus marker did not use focus icon color');
+        assert.ok(gutterIconPaths[1]?.includes('f59e0b'), 'warning marker did not use warning icon color');
     });
 
     test('sets kinded gutter markers from lines without changing selection', async () => {

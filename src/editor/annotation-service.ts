@@ -163,16 +163,18 @@ function kindThemeColor(kind: AnnotationKind): vscode.ThemeColor {
     }
 }
 
-function kindBackgroundColor(kind: AnnotationKind): vscode.ThemeColor {
+function kindBackgroundColor(kind: AnnotationKind): string | vscode.ThemeColor {
     switch (kind) {
-        case 'previous':
-            return new vscode.ThemeColor('editor.inactiveSelectionBackground');
-        case 'warning':
-            return new vscode.ThemeColor('editor.wordHighlightStrongBackground');
         case 'related':
+            return 'rgba(96, 165, 250, 0.10)';
+        case 'previous':
+            return 'rgba(156, 163, 175, 0.10)';
         case 'question':
+            return 'rgba(168, 85, 247, 0.10)';
+        case 'warning':
+            return 'rgba(245, 158, 11, 0.14)';
         case 'info':
-            return new vscode.ThemeColor('editor.wordHighlightBackground');
+            return 'rgba(56, 189, 248, 0.08)';
         case 'focus':
         default:
             return new vscode.ThemeColor('editor.findMatchHighlightBackground');
@@ -199,10 +201,7 @@ function kindOverviewColor(kind: AnnotationKind): vscode.ThemeColor {
 function createHighlightDecorationOptions(kind: AnnotationKind): vscode.DecorationRenderOptions {
     return {
         backgroundColor: kindBackgroundColor(kind),
-        border: kind === 'previous' ? undefined : '1px solid',
-        borderColor: kindThemeColor(kind),
         opacity: kind === 'previous' ? '0.65' : undefined,
-        textDecoration: kind === 'related' || kind === 'question' ? 'underline' : undefined,
         overviewRulerColor: kindOverviewColor(kind),
         overviewRulerLane: vscode.OverviewRulerLane.Right
     };

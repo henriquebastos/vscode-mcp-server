@@ -25,11 +25,14 @@ Repeat this loop until the user stops:
    - Use `reveal_range_code` for the file/range being discussed.
    - Prefer pathless calls for follow-ups when the active editor is already correct.
 2. **Mark exact spans**
-   - Use `set_highlight_code` with `id: "current"` and `mode: "replace"` for a new focus.
+   - Use `set_highlight_code` with `id: "current"`, `mode: "replace"`, and `kind: "focus"` for a new focus.
+   - Use `kind: "related"`, `"previous"`, `"question"`, `"warning"`, or `"info"` when the visual role is not the current focus.
    - Use `mode: "add"` only to show relationships across multiple spans.
-3. **Attach a short visible explanation**
+3. **Attach visible explanation surfaces**
    - Use `set_inline_callout_code` with a short title and one sentence.
    - Keep callouts under ~120 characters when practical.
+   - Use `set_gutter_marker_code` for step, question, warning, or related-location markers.
+   - Use `set_explanation_comment_code` for longer anchored markdown explanations; keep the wording clearly about “Guided Explanation.”
 4. **Explain briefly in chat**
    - Name what is highlighted and why it matters.
    - Mention the relevant behavior, not every implementation detail.
@@ -77,6 +80,7 @@ Repeat this loop until the user stops:
 
 - Coordinates are MCP-facing: line numbers are 1-based; characters are 0-based.
 - `id: "current"` is the default focus group.
+- `kind` controls visual meaning; use `focus`, `related`, `previous`, `question`, `warning`, or `info` instead of trying to control colors.
 - Use semantic ids like `related`, `previous`, or `question` only when multiple groups must be managed independently.
 - Do not use editor primitives to edit source files.
 - Do not expose selected text from unrelated/out-of-workspace editors; if context is empty, ask the user to focus a workspace file.

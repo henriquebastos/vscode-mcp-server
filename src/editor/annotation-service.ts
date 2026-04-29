@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { McpRange, mcpRangeToVsCodeRange, resolveEditorTarget, uriToWorkspacePath } from './location-utils';
 
 export type AnnotationMode = 'replace' | 'add';
+export type AnnotationKind = 'focus' | 'related' | 'previous' | 'question' | 'warning' | 'info';
 
 export interface AnnotationRangeInput extends McpRange {
     path?: string;
@@ -12,6 +13,7 @@ export interface SetHighlightsInput {
     path?: string;
     ranges: AnnotationRangeInput[];
     mode?: AnnotationMode;
+    kind?: AnnotationKind;
 }
 
 export interface SetInlineCalloutInput {
@@ -21,6 +23,27 @@ export interface SetInlineCalloutInput {
     title: string;
     message: string;
     mode?: AnnotationMode;
+    kind?: AnnotationKind;
+}
+
+export interface SetGutterMarkersInput {
+    id?: string;
+    path?: string;
+    ranges?: AnnotationRangeInput[];
+    lines?: number[];
+    mode?: AnnotationMode;
+    kind?: AnnotationKind;
+    label?: string;
+}
+
+export interface SetExplanationCommentInput {
+    id?: string;
+    path?: string;
+    range: AnnotationRangeInput;
+    title: string;
+    body: string;
+    mode?: AnnotationMode;
+    kind?: AnnotationKind;
 }
 
 export interface AnnotationOperationResult {
@@ -40,6 +63,30 @@ export interface ClearAnnotationsResult {
     clearedPaths: string[];
 }
 
+interface HighlightEntry {
+    uri: vscode.Uri;
+    range: vscode.Range;
+    kind: AnnotationKind;
+}
+
+interface CalloutEntry {
+    uri: vscode.Uri;
+    option: vscode.DecorationOptions;
+    kind: AnnotationKind;
+}
+
+interface GutterMarkerEntry {
+    uri: vscode.Uri;
+    option: vscode.DecorationOptions;
+    kind: AnnotationKind;
+}
+
+interface ExplanationCommentEntry {
+    uri: vscode.Uri;
+    thread: vscode.CommentThread;
+    kind: AnnotationKind;
+}
+
 interface RangesForUri {
     uri: vscode.Uri;
     ranges: vscode.Range[];
@@ -51,16 +98,19 @@ interface CalloutsForUri {
 }
 
 interface AnnotationGroup {
-    highlights: Map<string, RangesForUri>;
-    callouts: Map<string, CalloutsForUri>;
+    highlights: HighlightEntry[];
+    callouts: CalloutEntry[];
+    gutterMarkers: GutterMarkerEntry[];
+    explanationComments: ExplanationCommentEntry[];
 }
 
 const DEFAULT_ANNOTATION_ID = 'current';
+const DEFAULT_ANNOTATION_KIND: AnnotationKind = 'focus';
 
 function getOrCreateGroup(groups: Map<string, AnnotationGroup>, id: string): AnnotationGroup {
     let group = groups.get(id);
     if (!group) {
-        group = { highlights: new Map(), callouts: new Map() };
+        group = { highlights: [], callouts: [], gutterMarkers: [], explanationComments: [] };
         groups.set(id, group);
     }
 
@@ -71,57 +121,195 @@ function getVisibleEditor(uri: vscode.Uri): vscode.TextEditor | undefined {
     return vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
 }
 
+function hasEntries(group: AnnotationGroup): boolean {
+    return group.highlights.length > 0 || group.callouts.length > 0 || group.gutterMarkers.length > 0 || group.explanationComments.length > 0;
+}
+
+function addEntryPaths(paths: Set<string>, group: AnnotationGroup): void {
+    for (const entry of group.highlights) {
+        paths.add(uriToWorkspacePath(entry.uri));
+    }
+    for (const entry of group.callouts) {
+        paths.add(uriToWorkspacePath(entry.uri));
+    }
+    for (const entry of group.gutterMarkers) {
+        paths.add(uriToWorkspacePath(entry.uri));
+    }
+    for (const entry of group.explanationComments) {
+        paths.add(uriToWorkspacePath(entry.uri));
+    }
+}
+
+function operationResult(id: string, entries: Array<HighlightEntry | CalloutEntry | GutterMarkerEntry | ExplanationCommentEntry>): AnnotationOperationResult {
+    const paths = new Set(entries.map(entry => uriToWorkspacePath(entry.uri)));
+    return { id, paths: Array.from(paths), rangeCount: entries.length };
+}
+
+function kindThemeColor(kind: AnnotationKind): vscode.ThemeColor {
+    switch (kind) {
+        case 'related':
+            return new vscode.ThemeColor('editorInfo.foreground');
+        case 'previous':
+            return new vscode.ThemeColor('editorLineNumber.foreground');
+        case 'question':
+            return new vscode.ThemeColor('symbolIcon.eventForeground');
+        case 'warning':
+            return new vscode.ThemeColor('editorWarning.foreground');
+        case 'info':
+            return new vscode.ThemeColor('editorInfo.foreground');
+        case 'focus':
+        default:
+            return new vscode.ThemeColor('editor.findMatchBorder');
+    }
+}
+
+function kindBackgroundColor(kind: AnnotationKind): vscode.ThemeColor {
+    switch (kind) {
+        case 'previous':
+            return new vscode.ThemeColor('editor.inactiveSelectionBackground');
+        case 'warning':
+            return new vscode.ThemeColor('editor.wordHighlightStrongBackground');
+        case 'related':
+        case 'question':
+        case 'info':
+            return new vscode.ThemeColor('editor.wordHighlightBackground');
+        case 'focus':
+        default:
+            return new vscode.ThemeColor('editor.findMatchHighlightBackground');
+    }
+}
+
+function kindOverviewColor(kind: AnnotationKind): vscode.ThemeColor {
+    switch (kind) {
+        case 'warning':
+            return new vscode.ThemeColor('editorOverviewRuler.warningForeground');
+        case 'info':
+            return new vscode.ThemeColor('editorOverviewRuler.infoForeground');
+        case 'previous':
+            return new vscode.ThemeColor('editorOverviewRuler.rangeHighlightForeground');
+        case 'related':
+        case 'question':
+            return new vscode.ThemeColor('editorOverviewRuler.wordHighlightForeground');
+        case 'focus':
+        default:
+            return new vscode.ThemeColor('editorOverviewRuler.findMatchForeground');
+    }
+}
+
+function createHighlightDecorationOptions(kind: AnnotationKind): vscode.DecorationRenderOptions {
+    return {
+        backgroundColor: kindBackgroundColor(kind),
+        border: kind === 'previous' ? undefined : '1px solid',
+        borderColor: kindThemeColor(kind),
+        opacity: kind === 'previous' ? '0.65' : undefined,
+        textDecoration: kind === 'related' || kind === 'question' ? 'underline' : undefined,
+        overviewRulerColor: kindOverviewColor(kind),
+        overviewRulerLane: vscode.OverviewRulerLane.Right
+    };
+}
+
+function createCalloutDecorationOptions(kind: AnnotationKind): vscode.DecorationRenderOptions {
+    return {
+        after: {
+            margin: '0 0 0 1rem',
+            color: kindThemeColor(kind),
+            fontWeight: kind === 'focus' || kind === 'question' || kind === 'warning' ? '600' : undefined,
+            fontStyle: kind === 'previous' ? 'italic' : undefined
+        }
+    };
+}
+
+function markerIconColor(kind: AnnotationKind): string {
+    switch (kind) {
+        case 'warning':
+            return '#f59e0b';
+        case 'question':
+            return '#a855f7';
+        case 'related':
+            return '#60a5fa';
+        case 'previous':
+            return '#9ca3af';
+        case 'info':
+            return '#38bdf8';
+        case 'focus':
+        default:
+            return '#facc15';
+    }
+}
+
+function createGutterIconUri(kind: AnnotationKind): vscode.Uri {
+    const color = markerIconColor(kind);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="${color}"/></svg>`;
+    return vscode.Uri.parse(`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`);
+}
+
+function createGutterMarkerDecorationOptions(kind: AnnotationKind): vscode.DecorationRenderOptions {
+    return {
+        gutterIconPath: createGutterIconUri(kind),
+        gutterIconSize: 'contain',
+        overviewRulerColor: kindOverviewColor(kind),
+        overviewRulerLane: vscode.OverviewRulerLane.Right
+    };
+}
+
+function escapeMarkdownText(text: string): string {
+    return text.replace(/[\\`*_{}\[\]()#+\-.!|>]/g, character => `\\${character}`);
+}
+
+function sanitizeGuidedMarkdown(markdown: string): string {
+    return markdown
+        .replace(/!\[([^\]]*)\]\([^)]+\)/g, (_match, altText: string) => altText ? `[image omitted: ${escapeMarkdownText(altText)}]` : '[image omitted]')
+        .replace(/\[([^\]]+)\]\(\s*(?:file|data|command|vscode|javascript):[^)]*\)/gi, (_match, linkText: string) => escapeMarkdownText(linkText));
+}
+
+function createUntrustedMarkdown(value: string): vscode.MarkdownString {
+    const markdown = new vscode.MarkdownString(value);
+    markdown.isTrusted = false;
+    markdown.supportHtml = false;
+    return markdown;
+}
+
 export class EditorAnnotationService {
     private groups = new Map<string, AnnotationGroup>();
-    private readonly highlightDecorationType: vscode.TextEditorDecorationType;
-    private readonly calloutDecorationType: vscode.TextEditorDecorationType;
+    private readonly highlightDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
+    private readonly calloutDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
+    private readonly gutterMarkerDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
+    private readonly visibleEditorChangeDisposable: vscode.Disposable;
+    private commentController: vscode.CommentController | undefined;
 
     constructor() {
-        this.highlightDecorationType = vscode.window.createTextEditorDecorationType({
-            backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
-            border: '1px solid',
-            borderColor: new vscode.ThemeColor('editor.findMatchBorder')
-        });
-        this.calloutDecorationType = vscode.window.createTextEditorDecorationType({
-            after: {
-                margin: '0 0 0 1rem',
-                color: new vscode.ThemeColor('editorCodeLens.foreground')
-            }
-        });
+        this.getHighlightDecorationType(DEFAULT_ANNOTATION_KIND);
+        this.getCalloutDecorationType(DEFAULT_ANNOTATION_KIND);
+        this.visibleEditorChangeDisposable = vscode.window.onDidChangeVisibleTextEditors(() => this.reapplyDecorations());
     }
 
     public async setHighlights(input: SetHighlightsInput): Promise<AnnotationOperationResult> {
         const id = input.id ?? DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
-        const group = getOrCreateGroup(this.groups, id);
-        const nextHighlights = mode === 'add'
-            ? new Map(Array.from(group.highlights, ([key, entry]) => [key, { uri: entry.uri, ranges: [...entry.ranges] }]))
-            : new Map<string, RangesForUri>();
+        const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
+        const existingGroup = this.groups.get(id);
+        const nextHighlights = mode === 'add' && existingGroup ? [...existingGroup.highlights] : [];
+        const newEntries: HighlightEntry[] = [];
 
         for (const inputRange of input.ranges) {
             const target = await resolveEditorTarget({ path: inputRange.path ?? input.path });
-            const key = target.uri.toString();
-            const existing = nextHighlights.get(key) ?? { uri: target.uri, ranges: [] };
-            existing.ranges.push(mcpRangeToVsCodeRange(inputRange));
-            nextHighlights.set(key, existing);
+            newEntries.push({ uri: target.uri, range: mcpRangeToVsCodeRange(inputRange), kind });
         }
 
-        group.highlights = nextHighlights;
+        const group = getOrCreateGroup(this.groups, id);
+        group.highlights = [...nextHighlights, ...newEntries];
+        this.getHighlightDecorationType(kind);
         this.applyHighlights();
 
-        const paths = Array.from(nextHighlights.values()).map(entry => uriToWorkspacePath(entry.uri));
-        const rangeCount = Array.from(nextHighlights.values()).reduce((total, entry) => total + entry.ranges.length, 0);
-
-        return { id, paths, rangeCount };
+        return operationResult(id, group.highlights);
     }
 
     public async setInlineCallout(input: SetInlineCalloutInput): Promise<AnnotationOperationResult> {
         const id = input.id ?? DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
-        const group = getOrCreateGroup(this.groups, id);
-        const nextCallouts = mode === 'add'
-            ? new Map(Array.from(group.callouts, ([key, entry]) => [key, { uri: entry.uri, options: [...entry.options] }]))
-            : new Map<string, CalloutsForUri>();
+        const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
+        const existingGroup = this.groups.get(id);
+        const nextCallouts = mode === 'add' && existingGroup ? [...existingGroup.callouts] : [];
         const target = await resolveEditorTarget({ path: input.range.path ?? input.path });
         const editor = target.editor ?? getVisibleEditor(target.uri);
 
@@ -140,18 +328,64 @@ export class EditorAnnotationService {
             }
         };
 
-        const key = target.uri.toString();
-        const existing = nextCallouts.get(key) ?? { uri: target.uri, options: [] };
-        existing.options.push(option);
-        nextCallouts.set(key, existing);
-        group.callouts = nextCallouts;
-
+        const group = getOrCreateGroup(this.groups, id);
+        group.callouts = [...nextCallouts, { uri: target.uri, option, kind }];
+        this.getCalloutDecorationType(kind);
         this.applyCallouts();
 
-        const paths = Array.from(nextCallouts.values()).map(entry => uriToWorkspacePath(entry.uri));
-        const rangeCount = Array.from(nextCallouts.values()).reduce((total, entry) => total + entry.options.length, 0);
+        return operationResult(id, group.callouts);
+    }
 
-        return { id, paths, rangeCount };
+    public async setGutterMarkers(input: SetGutterMarkersInput): Promise<AnnotationOperationResult> {
+        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const mode = input.mode ?? 'replace';
+        const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
+        const existingGroup = this.groups.get(id);
+        const nextMarkers = mode === 'add' && existingGroup ? [...existingGroup.gutterMarkers] : [];
+        const newEntries: GutterMarkerEntry[] = [];
+
+        for (const line of input.lines ?? []) {
+            const target = await resolveEditorTarget({ path: input.path });
+            const range = mcpRangeToVsCodeRange({ start: { line, character: 0 }, end: { line, character: 0 } });
+            newEntries.push({ uri: target.uri, option: this.createGutterMarkerOption(range, input.label), kind });
+        }
+
+        for (const inputRange of input.ranges ?? []) {
+            const target = await resolveEditorTarget({ path: inputRange.path ?? input.path });
+            const range = mcpRangeToVsCodeRange(inputRange);
+            newEntries.push({ uri: target.uri, option: this.createGutterMarkerOption(range, input.label), kind });
+        }
+
+        if (newEntries.length === 0) {
+            throw new Error('Provide at least one line or range for a gutter marker.');
+        }
+
+        const group = getOrCreateGroup(this.groups, id);
+        group.gutterMarkers = [...nextMarkers, ...newEntries];
+        this.getGutterMarkerDecorationType(kind);
+        this.applyGutterMarkers();
+
+        return operationResult(id, group.gutterMarkers);
+    }
+
+    public async setExplanationComment(input: SetExplanationCommentInput): Promise<AnnotationOperationResult> {
+        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const mode = input.mode ?? 'replace';
+        const kind = input.kind ?? 'info';
+        const existingGroup = this.groups.get(id);
+        const nextComments = mode === 'add' && existingGroup ? [...existingGroup.explanationComments] : [];
+        const target = await resolveEditorTarget({ path: input.range.path ?? input.path });
+        const range = mcpRangeToVsCodeRange(input.range);
+        const thread = this.createExplanationCommentThread(target.uri, range, input.title, input.body, kind);
+
+        if (mode === 'replace' && existingGroup) {
+            this.disposeCommentEntries(existingGroup.explanationComments);
+        }
+
+        const group = getOrCreateGroup(this.groups, id);
+        group.explanationComments = [...nextComments, { uri: target.uri, thread, kind }];
+
+        return operationResult(id, group.explanationComments);
     }
 
     public async clearAnnotations(input: ClearAnnotationsInput = {}): Promise<ClearAnnotationsResult> {
@@ -164,12 +398,8 @@ export class EditorAnnotationService {
         if (input.all) {
             clearedIds = this.groups.size;
             for (const group of this.groups.values()) {
-                for (const entry of group.highlights.values()) {
-                    clearedPaths.add(uriToWorkspacePath(entry.uri));
-                }
-                for (const entry of group.callouts.values()) {
-                    clearedPaths.add(uriToWorkspacePath(entry.uri));
-                }
+                addEntryPaths(clearedPaths, group);
+                this.disposeCommentEntries(group.explanationComments);
             }
             this.groups.clear();
         } else {
@@ -182,92 +412,210 @@ export class EditorAnnotationService {
                 }
 
                 if (pathKey) {
-                    const removedHighlights = group.highlights.delete(pathKey);
-                    const removedCallouts = group.callouts.delete(pathKey);
-                    if (removedHighlights || removedCallouts) {
+                    const beforeCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.explanationComments.length;
+                    group.highlights = group.highlights.filter(entry => entry.uri.toString() !== pathKey);
+                    group.callouts = group.callouts.filter(entry => entry.uri.toString() !== pathKey);
+                    group.gutterMarkers = group.gutterMarkers.filter(entry => entry.uri.toString() !== pathKey);
+                    const removedComments = group.explanationComments.filter(entry => entry.uri.toString() === pathKey);
+                    this.disposeCommentEntries(removedComments);
+                    group.explanationComments = group.explanationComments.filter(entry => entry.uri.toString() !== pathKey);
+                    const afterCount = group.highlights.length + group.callouts.length + group.gutterMarkers.length + group.explanationComments.length;
+
+                    if (beforeCount !== afterCount) {
                         if (pathLabel) {
                             clearedPaths.add(pathLabel);
                         }
                         clearedIds += 1;
                     }
-                    if (group.highlights.size === 0 && group.callouts.size === 0) {
+                    if (!hasEntries(group)) {
                         this.groups.delete(id);
                     }
                 } else if (this.groups.delete(id)) {
                     clearedIds += 1;
-                    for (const entry of group.highlights.values()) {
-                        clearedPaths.add(uriToWorkspacePath(entry.uri));
-                    }
-                    for (const entry of group.callouts.values()) {
-                        clearedPaths.add(uriToWorkspacePath(entry.uri));
-                    }
+                    addEntryPaths(clearedPaths, group);
+                    this.disposeCommentEntries(group.explanationComments);
                 }
             }
         }
 
         this.applyHighlights();
         this.applyCallouts();
+        this.applyGutterMarkers();
 
         return { clearedIds, clearedPaths: Array.from(clearedPaths) };
     }
 
+    private getCommentController(): vscode.CommentController {
+        if (!this.commentController) {
+            this.commentController = vscode.comments.createCommentController('vscode-mcp-server.guided-explanation', 'Guided Explanation');
+            this.commentController.options = {
+                prompt: 'Guided explanation comments are temporary teaching notes.',
+                placeHolder: 'Guided explanation'
+            };
+        }
+
+        return this.commentController;
+    }
+
+    private createExplanationCommentThread(uri: vscode.Uri, range: vscode.Range, title: string, body: string, kind: AnnotationKind): vscode.CommentThread {
+        const markdown = createUntrustedMarkdown(`**Guided Explanation: ${escapeMarkdownText(title)}**\n\n${sanitizeGuidedMarkdown(body)}`);
+        const comment: vscode.Comment = {
+            body: markdown,
+            mode: vscode.CommentMode.Preview,
+            author: { name: 'Guided Explanation' },
+            label: kind
+        };
+        const thread = this.getCommentController().createCommentThread(uri, range, [comment]);
+        thread.label = `Guided Explanation: ${title}`;
+        thread.canReply = false;
+        thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+        thread.contextValue = 'guidedExplanation';
+
+        return thread;
+    }
+
+    private disposeCommentEntries(entries: ExplanationCommentEntry[]): void {
+        for (const entry of entries) {
+            entry.thread.dispose();
+        }
+    }
+
+    private getHighlightDecorationType(kind: AnnotationKind): vscode.TextEditorDecorationType {
+        let decorationType = this.highlightDecorationTypes.get(kind);
+        if (!decorationType) {
+            decorationType = vscode.window.createTextEditorDecorationType(createHighlightDecorationOptions(kind));
+            this.highlightDecorationTypes.set(kind, decorationType);
+        }
+
+        return decorationType;
+    }
+
+    private getCalloutDecorationType(kind: AnnotationKind): vscode.TextEditorDecorationType {
+        let decorationType = this.calloutDecorationTypes.get(kind);
+        if (!decorationType) {
+            decorationType = vscode.window.createTextEditorDecorationType(createCalloutDecorationOptions(kind));
+            this.calloutDecorationTypes.set(kind, decorationType);
+        }
+
+        return decorationType;
+    }
+
+    private getGutterMarkerDecorationType(kind: AnnotationKind): vscode.TextEditorDecorationType {
+        let decorationType = this.gutterMarkerDecorationTypes.get(kind);
+        if (!decorationType) {
+            decorationType = vscode.window.createTextEditorDecorationType(createGutterMarkerDecorationOptions(kind));
+            this.gutterMarkerDecorationTypes.set(kind, decorationType);
+        }
+
+        return decorationType;
+    }
+
+    private createGutterMarkerOption(range: vscode.Range, label?: string): vscode.DecorationOptions {
+        const option: vscode.DecorationOptions = { range };
+        if (label) {
+            option.hoverMessage = createUntrustedMarkdown(escapeMarkdownText(label));
+        }
+
+        return option;
+    }
+
     private applyHighlights(): void {
-        const rangesByUri = new Map<string, RangesForUri>();
+        const rangesByKindAndUri = new Map<AnnotationKind, Map<string, RangesForUri>>();
 
         for (const group of this.groups.values()) {
-            for (const [key, entry] of group.highlights) {
+            for (const entry of group.highlights) {
+                const rangesByUri = rangesByKindAndUri.get(entry.kind) ?? new Map<string, RangesForUri>();
+                const key = entry.uri.toString();
                 const combined = rangesByUri.get(key) ?? { uri: entry.uri, ranges: [] };
-                combined.ranges.push(...entry.ranges);
+                combined.ranges.push(entry.range);
                 rangesByUri.set(key, combined);
+                rangesByKindAndUri.set(entry.kind, rangesByUri);
             }
         }
 
-        const visibleUris = new Set(vscode.window.visibleTextEditors.map(editor => editor.document.uri.toString()));
-        for (const [key, entry] of rangesByUri) {
-            const editor = getVisibleEditor(entry.uri);
-            if (editor) {
-                editor.setDecorations(this.highlightDecorationType, entry.ranges);
-            }
-            visibleUris.delete(key);
-        }
-
-        for (const editor of vscode.window.visibleTextEditors) {
-            if (visibleUris.has(editor.document.uri.toString())) {
-                editor.setDecorations(this.highlightDecorationType, []);
+        for (const [kind, decorationType] of this.highlightDecorationTypes) {
+            const rangesByUri = rangesByKindAndUri.get(kind) ?? new Map<string, RangesForUri>();
+            for (const editor of vscode.window.visibleTextEditors) {
+                const ranges = rangesByUri.get(editor.document.uri.toString())?.ranges ?? [];
+                editor.setDecorations(decorationType, ranges);
             }
         }
     }
 
     private applyCallouts(): void {
-        const calloutsByUri = new Map<string, CalloutsForUri>();
+        const calloutsByKindAndUri = new Map<AnnotationKind, Map<string, CalloutsForUri>>();
 
         for (const group of this.groups.values()) {
-            for (const [key, entry] of group.callouts) {
+            for (const entry of group.callouts) {
+                const calloutsByUri = calloutsByKindAndUri.get(entry.kind) ?? new Map<string, CalloutsForUri>();
+                const key = entry.uri.toString();
                 const combined = calloutsByUri.get(key) ?? { uri: entry.uri, options: [] };
-                combined.options.push(...entry.options);
+                combined.options.push(entry.option);
                 calloutsByUri.set(key, combined);
+                calloutsByKindAndUri.set(entry.kind, calloutsByUri);
             }
         }
 
-        const visibleUris = new Set(vscode.window.visibleTextEditors.map(editor => editor.document.uri.toString()));
-        for (const [key, entry] of calloutsByUri) {
-            const editor = getVisibleEditor(entry.uri);
-            if (editor) {
-                editor.setDecorations(this.calloutDecorationType, entry.options);
+        for (const [kind, decorationType] of this.calloutDecorationTypes) {
+            const calloutsByUri = calloutsByKindAndUri.get(kind) ?? new Map<string, CalloutsForUri>();
+            for (const editor of vscode.window.visibleTextEditors) {
+                const options = calloutsByUri.get(editor.document.uri.toString())?.options ?? [];
+                editor.setDecorations(decorationType, options);
             }
-            visibleUris.delete(key);
+        }
+    }
+
+    private reapplyDecorations(): void {
+        this.applyHighlights();
+        this.applyCallouts();
+        this.applyGutterMarkers();
+    }
+
+    private applyGutterMarkers(): void {
+        const markersByKindAndUri = new Map<AnnotationKind, Map<string, CalloutsForUri>>();
+
+        for (const group of this.groups.values()) {
+            for (const entry of group.gutterMarkers) {
+                const markersByUri = markersByKindAndUri.get(entry.kind) ?? new Map<string, CalloutsForUri>();
+                const key = entry.uri.toString();
+                const combined = markersByUri.get(key) ?? { uri: entry.uri, options: [] };
+                combined.options.push(entry.option);
+                markersByUri.set(key, combined);
+                markersByKindAndUri.set(entry.kind, markersByUri);
+            }
         }
 
-        for (const editor of vscode.window.visibleTextEditors) {
-            if (visibleUris.has(editor.document.uri.toString())) {
-                editor.setDecorations(this.calloutDecorationType, []);
+        for (const [kind, decorationType] of this.gutterMarkerDecorationTypes) {
+            const markersByUri = markersByKindAndUri.get(kind) ?? new Map<string, CalloutsForUri>();
+            for (const editor of vscode.window.visibleTextEditors) {
+                const options = markersByUri.get(editor.document.uri.toString())?.options ?? [];
+                editor.setDecorations(decorationType, options);
             }
         }
     }
 
     public dispose(): void {
-        this.highlightDecorationType.dispose();
-        this.calloutDecorationType.dispose();
+        for (const group of this.groups.values()) {
+            this.disposeCommentEntries(group.explanationComments);
+        }
+        if (this.commentController) {
+            this.commentController.dispose();
+            this.commentController = undefined;
+        }
+        this.visibleEditorChangeDisposable.dispose();
+        for (const decorationType of this.highlightDecorationTypes.values()) {
+            decorationType.dispose();
+        }
+        for (const decorationType of this.calloutDecorationTypes.values()) {
+            decorationType.dispose();
+        }
+        for (const decorationType of this.gutterMarkerDecorationTypes.values()) {
+            decorationType.dispose();
+        }
+        this.highlightDecorationTypes.clear();
+        this.calloutDecorationTypes.clear();
+        this.gutterMarkerDecorationTypes.clear();
+        this.groups.clear();
     }
 }
 

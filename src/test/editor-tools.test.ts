@@ -1,10 +1,16 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
+import { disposeEditorAnnotationService } from '../editor/annotation-service';
 import { registerEditorTools } from '../tools/editor-tools';
 
 suite('Editor MCP Tools', () => {
+    setup(() => {
+        sinon.stub(vscode.window, 'onDidChangeVisibleTextEditors').returns({ dispose: sinon.spy() } as unknown as vscode.Disposable);
+    });
+
     teardown(() => {
+        disposeEditorAnnotationService();
         sinon.restore();
     });
 
@@ -149,6 +155,76 @@ suite('Editor MCP Tools', () => {
         assert.strictEqual(payload.id, 'current');
         assert.deepStrictEqual(payload.paths, ['src/example.ts']);
         assert.strictEqual(payload.rangeCount, 1);
+    });
+
+    test('registers set_explanation_comment_code and returns comment summary', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const thread = { dispose: sinon.spy(), canReply: true } as unknown as vscode.CommentThread;
+        const controller = {
+            id: 'guided-explanation',
+            label: 'Guided Explanation',
+            createCommentThread: sinon.stub().returns(thread),
+            dispose: sinon.spy()
+        } as unknown as vscode.CommentController;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.comments, 'createCommentController').returns(controller);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'set_explanation_comment_code');
+        assert.ok(tool, 'set_explanation_comment_code was not registered');
+
+        const result = await tool.handler({
+            title: 'Guided note',
+            body: 'Longer **markdown** note.',
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }
+        });
+        const payload = JSON.parse(result.content[0].text);
+
+        assert.strictEqual(payload.id, 'current');
+        assert.deepStrictEqual(payload.paths, ['src/example.ts']);
+        assert.strictEqual(payload.rangeCount, 1);
+    });
+
+    test('registers set_gutter_marker_code and returns marker summary', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'set_gutter_marker_code');
+        assert.ok(tool, 'set_gutter_marker_code was not registered');
+
+        const result = await tool.handler({
+            kind: 'warning',
+            label: 'Risky branch',
+            lines: [1, 2]
+        });
+        const payload = JSON.parse(result.content[0].text);
+
+        assert.strictEqual(payload.id, 'current');
+        assert.deepStrictEqual(payload.paths, ['src/example.ts']);
+        assert.strictEqual(payload.rangeCount, 2);
     });
 
     test('registers set_highlight_code and returns annotation summary', async () => {

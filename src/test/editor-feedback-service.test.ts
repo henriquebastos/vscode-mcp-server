@@ -60,6 +60,30 @@ suite('Editor Feedback Capture Service', () => {
         return { activeEditor, decorationType, documentUri, selection, setDecorationsSpy };
     }
 
+    test('rejects empty generated feedback session and item ids', async () => {
+        stubWorkspaceEditor();
+        const emptySessionIdService = new FeedbackCaptureService({
+            createSessionId: () => '',
+            createItemId: () => 'feedback-item-1',
+            now: () => new Date('2026-04-29T21:30:00.000Z')
+        });
+        const emptyItemIdService = new FeedbackCaptureService({
+            createSessionId: () => 'feedback-session-1',
+            createItemId: () => ' ',
+            now: () => new Date('2026-04-29T21:30:00.000Z')
+        });
+        services.push(emptySessionIdService, emptyItemIdService);
+
+        await assert.rejects(
+            () => emptySessionIdService.addFeedback({ feedbackText: 'Needs a session id.' }),
+            /FeedbackSessionId must not be empty/
+        );
+        await assert.rejects(
+            () => emptyItemIdService.addFeedback({ feedbackText: 'Needs an item id.' }),
+            /FeedbackItemId must not be empty/
+        );
+    });
+
     test('captures a workspace editor selection as a draft feedback item with a temporary marker', async () => {
         const { activeEditor, decorationType, documentUri, selection, setDecorationsSpy } = stubWorkspaceEditor();
 

@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
+import { z } from 'zod';
 import { disposeEditorAnnotationService } from '../editor/annotation-service';
 import { disposeEditorDiffService } from '../editor/diff-service';
 import { FEEDBACK_ITEM_COUNT_CONTEXT, FEEDBACK_READY_CONTEXT } from '../editor/feedback-commands';
@@ -20,16 +21,124 @@ suite('Editor MCP Tools', () => {
     });
 
     function createEditorToolServer() {
-        const registeredTools: Array<{ name: string; handler: (args: any) => Promise<any> }> = [];
+        const registeredTools: Array<{ name: string; schema: unknown; handler: (args: any) => Promise<any> }> = [];
         const server = {
-            tool: (name: string, _description: string, _schema: unknown, handler: (args: any) => Promise<any>) => {
-                registeredTools.push({ name, handler });
+            tool: (name: string, _description: string, schema: unknown, handler: (args: any) => Promise<any>) => {
+                registeredTools.push({ name, schema, handler });
+            },
+            registerTool: (name: string, config: { inputSchema?: unknown }, handler: (args: any) => Promise<any>) => {
+                registeredTools.push({ name, schema: config.inputSchema ?? {}, handler });
             }
         };
 
         registerEditorTools(server as any);
         return registeredTools;
     }
+
+    function parseToolInput(schema: unknown, input: unknown): z.SafeParseReturnType<unknown, unknown> {
+        if (schema && typeof schema === 'object' && 'safeParse' in schema && typeof schema.safeParse === 'function') {
+            return (schema as z.ZodTypeAny).safeParse(input);
+        }
+
+        return z.object(schema as z.ZodRawShape).safeParse(input);
+    }
+
+    test('rejects path and uri together at the MCP schema edge', () => {
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'set_highlight_code');
+        assert.ok(tool, 'set_highlight_code was not registered');
+
+        const parsed = parseToolInput(tool.schema, {
+            path: 'src/example.ts',
+            uri: vscode.Uri.file('/workspace/src/example.ts').toString(),
+            ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
+        });
+
+        assert.strictEqual(parsed.success, false);
+        if (!parsed.success) {
+            assert.ok(parsed.error.issues.some(issue => issue.message === 'Provide either path or uri, not both.'));
+        }
+    });
+
+    test('rejects path and uri together on nested annotation ranges at the MCP schema edge', () => {
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'set_highlight_code');
+        assert.ok(tool, 'set_highlight_code was not registered');
+
+        const parsed = parseToolInput(tool.schema, {
+            ranges: [{
+                path: 'src/example.ts',
+                uri: vscode.Uri.file('/workspace/src/example.ts').toString(),
+                start: { line: 1, character: 0 },
+                end: { line: 1, character: 4 }
+            }]
+        });
+
+        assert.strictEqual(parsed.success, false);
+        if (!parsed.success) {
+            assert.ok(parsed.error.issues.some(issue => issue.message === 'Provide either path or uri for an annotation range, not both.'));
+        }
+    });
+
+    test('rejects invalid annotation kind and line numbers at the MCP schema edge', () => {
+        const registeredTools = createEditorToolServer();
+        const highlight = registeredTools.find(registered => registered.name === 'set_highlight_code');
+        const gutter = registeredTools.find(registered => registered.name === 'set_gutter_marker_code');
+        assert.ok(highlight, 'set_highlight_code was not registered');
+        assert.ok(gutter, 'set_gutter_marker_code was not registered');
+
+        assert.strictEqual(parseToolInput(highlight.schema, {
+            kind: 'invalid',
+            ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
+        }).success, false);
+        assert.strictEqual(parseToolInput(highlight.schema, {
+            ranges: [{ start: { line: 0, character: 0 }, end: { line: 1, character: 4 } }]
+        }).success, false);
+        assert.strictEqual(parseToolInput(gutter.schema, { lines: [0] }).success, false);
+    });
+
+    test('rejects ambiguous diff source and entries modes at the MCP schema edge', () => {
+        const leftUri = vscode.Uri.file('/workspace/src/old.ts');
+        const rightUri = vscode.Uri.file('/workspace/src/new.ts');
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'open_diff_code');
+        assert.ok(tool, 'open_diff_code was not registered');
+
+        const parsed = parseToolInput(tool.schema, {
+            leftUri: leftUri.toString(),
+            rightUri: rightUri.toString(),
+            entries: [{ rightUri: rightUri.toString() }]
+        });
+
+        assert.strictEqual(parsed.success, false);
+        if (!parsed.success) {
+            assert.ok(parsed.error.issues.some(issue => issue.message === 'Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.'));
+        }
+    });
+
+    test('rejects incomplete diff modes at the MCP schema edge', () => {
+        const leftUri = vscode.Uri.file('/workspace/src/old.ts');
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'open_diff_code');
+        assert.ok(tool, 'open_diff_code was not registered');
+
+        assert.strictEqual(parseToolInput(tool.schema, { leftUri: leftUri.toString() }).success, false);
+        assert.strictEqual(parseToolInput(tool.schema, { entries: [] }).success, false);
+        assert.strictEqual(parseToolInput(tool.schema, { entries: [{ label: 'empty entry' }] }).success, false);
+    });
+
+    test('accepts one-sided explicit diff entries at the MCP schema edge', () => {
+        const rightUri = vscode.Uri.file('/workspace/src/added.ts');
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'open_diff_code');
+        assert.ok(tool, 'open_diff_code was not registered');
+
+        const parsed = parseToolInput(tool.schema, {
+            entries: [{ label: 'Added file', rightUri: rightUri.toString() }]
+        });
+
+        assert.strictEqual(parsed.success, true);
+    });
 
     test('registers open_diff_code and returns a native changes editor diff result', async () => {
         const leftUri = vscode.Uri.file('/workspace/src/old.ts');

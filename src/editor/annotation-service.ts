@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { AnnotationId, toAnnotationId } from './ids';
 import { McpRange, mcpRangeToVsCodeRange, resolveEditorTarget, isUriInsideWorkspace, uriToWorkspacePath } from './location-utils';
 
 export type AnnotationMode = 'replace' | 'add';
@@ -66,7 +67,7 @@ export interface SetCodeLensNoteInput extends AnnotationTargetInput {
 }
 
 export interface AnnotationOperationResult {
-    id: string;
+    id: AnnotationId;
     paths: string[];
     uris: string[];
     rangeCount: number;
@@ -139,7 +140,7 @@ interface AnnotationGroup {
     explanationComments: ExplanationCommentEntry[];
 }
 
-const DEFAULT_ANNOTATION_ID = 'current';
+const DEFAULT_ANNOTATION_ID = toAnnotationId('current');
 const DEFAULT_ANNOTATION_KIND: AnnotationKind = 'focus';
 const CODELENS_NOTE_NOOP_COMMAND = 'vscode-mcp-server.codelensNote.noop';
 
@@ -168,7 +169,7 @@ function acquireCodeLensNoteNoopCommand(): vscode.Disposable {
     };
 }
 
-function getOrCreateGroup(groups: Map<string, AnnotationGroup>, id: string): AnnotationGroup {
+function getOrCreateGroup(groups: Map<AnnotationId, AnnotationGroup>, id: AnnotationId): AnnotationGroup {
     let group = groups.get(id);
     if (!group) {
         group = { highlights: [], callouts: [], gutterMarkers: [], hoverNotes: [], codeLensNotes: [], explanationComments: [] };
@@ -219,7 +220,7 @@ function addEntryTargets(paths: Set<string>, uris: Set<string>, group: Annotatio
     }
 }
 
-function operationResult(id: string, entries: Array<HighlightEntry | CalloutEntry | GutterMarkerEntry | HoverNoteEntry | CodeLensNoteEntry | ExplanationCommentEntry>): AnnotationOperationResult {
+function operationResult(id: AnnotationId, entries: Array<HighlightEntry | CalloutEntry | GutterMarkerEntry | HoverNoteEntry | CodeLensNoteEntry | ExplanationCommentEntry>): AnnotationOperationResult {
     const paths = new Set<string>();
     const uris = new Set<string>();
     for (const entry of entries) {
@@ -375,7 +376,7 @@ function createUntrustedMarkdown(value: string): vscode.MarkdownString {
 }
 
 export class EditorAnnotationService {
-    private groups = new Map<string, AnnotationGroup>();
+    private groups = new Map<AnnotationId, AnnotationGroup>();
     private readonly highlightDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
     private readonly calloutDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
     private readonly gutterMarkerDecorationTypes = new Map<AnnotationKind, vscode.TextEditorDecorationType>();
@@ -401,7 +402,7 @@ export class EditorAnnotationService {
     }
 
     public async setHighlights(input: SetHighlightsInput): Promise<AnnotationOperationResult> {
-        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
         const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
         const existingGroup = this.groups.get(id);
@@ -422,7 +423,7 @@ export class EditorAnnotationService {
     }
 
     public async setInlineCallout(input: SetInlineCalloutInput): Promise<AnnotationOperationResult> {
-        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
         const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
         const existingGroup = this.groups.get(id);
@@ -454,7 +455,7 @@ export class EditorAnnotationService {
     }
 
     public async setGutterMarkers(input: SetGutterMarkersInput): Promise<AnnotationOperationResult> {
-        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
         const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
         const existingGroup = this.groups.get(id);
@@ -486,7 +487,7 @@ export class EditorAnnotationService {
     }
 
     public async setHoverNote(input: SetHoverNoteInput): Promise<AnnotationOperationResult> {
-        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
         const kind = input.kind ?? 'info';
         const existingGroup = this.groups.get(id);
@@ -504,7 +505,7 @@ export class EditorAnnotationService {
     }
 
     public async setCodeLensNote(input: SetCodeLensNoteInput): Promise<AnnotationOperationResult> {
-        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
         const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
         const existingGroup = this.groups.get(id);
@@ -520,7 +521,7 @@ export class EditorAnnotationService {
     }
 
     public async setExplanationComment(input: SetExplanationCommentInput): Promise<AnnotationOperationResult> {
-        const id = input.id ?? DEFAULT_ANNOTATION_ID;
+        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
         const mode = input.mode ?? 'replace';
         const kind = input.kind ?? 'info';
         const existingGroup = this.groups.get(id);
@@ -555,7 +556,7 @@ export class EditorAnnotationService {
             }
             this.groups.clear();
         } else {
-            const targetId = input.id ?? (targetKey ? undefined : DEFAULT_ANNOTATION_ID);
+            const targetId = input.id !== undefined ? toAnnotationId(input.id) : (targetKey ? undefined : DEFAULT_ANNOTATION_ID);
             const groupsToClear = targetId ? [[targetId, this.groups.get(targetId)] as const] : Array.from(this.groups.entries());
 
             for (const [id, group] of groupsToClear) {

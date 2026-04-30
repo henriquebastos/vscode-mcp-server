@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { DiffEntryMatch, getEditorDiffService } from './diff-service';
+import { DiffId, FeedbackItemId, FeedbackSessionId, toFeedbackItemId, toFeedbackSessionId } from './ids';
 import { SerializedRange, isUriInsideWorkspace, uriToWorkspacePath, vsCodeRangeToSerializedRange } from './location-utils';
 
 const DEFAULT_MAX_SELECTED_TEXT_CHARACTERS = 4000;
@@ -7,14 +8,14 @@ const DEFAULT_MAX_SELECTED_TEXT_CHARACTERS = 4000;
 export type FeedbackSessionStatus = 'draft' | 'ready' | 'drained' | 'cancelled';
 
 export interface FeedbackDiffMetadata {
-    diffId: string;
+    diffId: DiffId;
     entryIndex: number;
     label?: string;
     side: 'left' | 'right';
 }
 
 export interface FeedbackItem {
-    id: string;
+    id: FeedbackItemId;
     order: number;
     createdAt: string;
     uri: string;
@@ -30,7 +31,7 @@ export interface FeedbackItem {
 }
 
 export interface FeedbackSessionSnapshot {
-    id: string;
+    id: FeedbackSessionId;
     status: FeedbackSessionStatus;
     count: number;
     items: FeedbackItem[];
@@ -67,7 +68,7 @@ interface StoredFeedbackItem {
 }
 
 interface FeedbackSessionState {
-    id: string;
+    id: FeedbackSessionId;
     status: FeedbackSessionStatus;
     items: StoredFeedbackItem[];
 }
@@ -135,13 +136,15 @@ export class FeedbackCaptureService {
     private session: FeedbackSessionState | undefined;
     private readonly markerDecorationType: vscode.TextEditorDecorationType;
     private readonly visibleEditorChangeDisposable: vscode.Disposable;
-    private readonly createSessionId: () => string;
-    private readonly createItemId: () => string;
+    private readonly createSessionId: () => FeedbackSessionId;
+    private readonly createItemId: () => FeedbackItemId;
     private readonly now: () => Date;
 
     constructor(options: FeedbackCaptureServiceOptions = {}) {
-        this.createSessionId = options.createSessionId ?? (() => defaultId('feedback-session'));
-        this.createItemId = options.createItemId ?? (() => defaultId('feedback-item'));
+        const createSessionId = options.createSessionId ?? (() => defaultId('feedback-session'));
+        const createItemId = options.createItemId ?? (() => defaultId('feedback-item'));
+        this.createSessionId = () => toFeedbackSessionId(createSessionId());
+        this.createItemId = () => toFeedbackItemId(createItemId());
         this.now = options.now ?? (() => new Date());
         this.markerDecorationType = vscode.window.createTextEditorDecorationType(createFeedbackMarkerDecorationOptions());
         this.visibleEditorChangeDisposable = vscode.window.onDidChangeVisibleTextEditors(() => this.reapplyMarkers());

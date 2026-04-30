@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import {
+    WorkspacePath,
     assertWorkspacePath,
     getSingleWorkspaceRoot,
     isUriInsideWorkspace,
-    normalizeWorkspacePath,
     uriToWorkspacePath,
     workspacePathToUri
 } from '../workspace/workspace-boundary';
@@ -14,6 +14,11 @@ export interface EditorTargetInput {
     path?: string;
     uri?: string;
 }
+
+export type EditorTarget =
+    | { kind: 'activeEditor' }
+    | { kind: 'workspacePath'; path: WorkspacePath }
+    | { kind: 'documentUri'; uri: vscode.Uri };
 
 export interface ResolvedEditorTarget {
     uri: vscode.Uri;
@@ -94,30 +99,46 @@ export function vsCodeRangeToSerializedRange(range: vscode.Range): SerializedRan
     };
 }
 
-export async function resolveEditorTarget(input: EditorTargetInput = {}): Promise<ResolvedEditorTarget> {
-    const hasPath = Boolean(input.path && input.path.trim().length > 0);
-    const hasUri = Boolean(input.uri && input.uri.trim().length > 0);
+export function normalizeEditorTargetInput(input: EditorTargetInput = {}): EditorTarget {
+    const hasPath = input.path !== undefined;
+    const hasUri = input.uri !== undefined;
 
     if (hasPath && hasUri) {
         throw new Error('Provide either path or uri, not both.');
     }
 
-    if (hasUri && input.uri) {
-        const uri = vscode.Uri.parse(input.uri, true);
-        assertSafeEditorUri(uri, input.uri);
+    if (hasPath) {
+        return { kind: 'workspacePath', path: assertWorkspacePath(input.path ?? '') };
+    }
+
+    if (hasUri) {
+        return { kind: 'documentUri', uri: vscode.Uri.parse(input.uri ?? '', true) };
+    }
+
+    return { kind: 'activeEditor' };
+}
+
+function isEditorTarget(input: EditorTargetInput | EditorTarget): input is EditorTarget {
+    return 'kind' in input;
+}
+
+export async function resolveEditorTarget(input: EditorTargetInput | EditorTarget = { kind: 'activeEditor' }): Promise<ResolvedEditorTarget> {
+    const target = isEditorTarget(input) ? input : normalizeEditorTargetInput(input);
+
+    if (target.kind === 'documentUri') {
+        assertSafeEditorUri(target.uri, target.uri.toString());
         return {
-            uri,
-            path: editorUriPath(uri),
-            editor: findVisibleEditor(uri)
+            uri: target.uri,
+            path: editorUriPath(target.uri),
+            editor: findVisibleEditor(target.uri)
         };
     }
 
-    if (hasPath && input.path) {
-        const workspacePath = assertWorkspacePath(input.path);
-        const uri = workspacePathToUri(workspacePath);
+    if (target.kind === 'workspacePath') {
+        const uri = workspacePathToUri(target.path);
         return {
             uri,
-            path: normalizeWorkspacePath(input.path),
+            path: target.path,
             editor: findVisibleEditor(uri)
         };
     }

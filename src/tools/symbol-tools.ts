@@ -122,11 +122,16 @@ function findSymbolInLine(lineText: string, symbolName: string): number {
  * @param content The hover content item
  * @returns String representation of the content
  */
-function processHoverContent(content: any): string {
+function hasValueProperty(content: unknown): content is { value: unknown } {
+    return typeof content === 'object' && content !== null && 'value' in content;
+}
+
+function processHoverContent(content: unknown): string {
     if (typeof content === 'string') {
         return content;
-    } else if (content && typeof content === 'object' && 'value' in content) {
-        return content.value;
+    }
+    if (hasValueProperty(content)) {
+        return typeof content.value === 'string' ? content.value : String(content.value);
     }
     return String(content);
 }
@@ -280,25 +285,31 @@ export async function searchWorkspaceSymbols(query: string, maxResults: number =
  * @param maxDepth Maximum nesting depth to display (optional)
  * @returns Formatted symbol information with hierarchy
  */
+interface SerializedPosition {
+    line: number;
+    character: number;
+}
+
+interface SerializedRange {
+    start: SerializedPosition;
+    end: SerializedPosition;
+}
+
+interface SerializedDocumentSymbol {
+    name: string;
+    detail?: string;
+    kind: string;
+    range: SerializedRange;
+    selectionRange: SerializedRange;
+    depth: number;
+    children?: number;
+}
+
 export async function getDocumentSymbols(
     uri: vscode.Uri,
     maxDepth?: number
 ): Promise<{
-    symbols: Array<{
-        name: string;
-        detail?: string;
-        kind: string;
-        range: {
-            start: { line: number; character: number };
-            end: { line: number; character: number };
-        };
-        selectionRange: {
-            start: { line: number; character: number };
-            end: { line: number; character: number };
-        };
-        depth: number;
-        children?: any[];
-    }>;
+    symbols: SerializedDocumentSymbol[];
     total: number;
     totalByKind: Record<string, number>;
 }> {
@@ -313,7 +324,7 @@ export async function getDocumentSymbols(
 
         logger.info(`[getDocumentSymbols] Found ${symbols.length} top-level symbols`);
 
-        const flatSymbols: any[] = [];
+        const flatSymbols: SerializedDocumentSymbol[] = [];
         const kindCounts: Record<string, number> = {};
 
         // Recursive function to process symbols and their children
@@ -327,9 +338,8 @@ export async function getDocumentSymbols(
                 const kindString = symbolKindToString(symbol.kind);
                 kindCounts[kindString] = (kindCounts[kindString] || 0) + 1;
 
-                const processedSymbol = {
+                const processedSymbol: SerializedDocumentSymbol = {
                     name: symbol.name,
-                    detail: symbol.detail || undefined,
                     kind: kindString,
                     range: {
                         start: {
@@ -351,9 +361,14 @@ export async function getDocumentSymbols(
                             character: symbol.selectionRange.end.character
                         }
                     },
-                    depth,
-                    children: symbol.children && symbol.children.length > 0 ? symbol.children.length : undefined
+                    depth
                 };
+                if (symbol.detail) {
+                    processedSymbol.detail = symbol.detail;
+                }
+                if (symbol.children && symbol.children.length > 0) {
+                    processedSymbol.children = symbol.children.length;
+                }
 
                 flatSymbols.push(processedSymbol);
 

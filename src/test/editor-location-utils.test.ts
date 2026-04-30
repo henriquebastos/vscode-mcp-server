@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
-import { mcpRangeToVsCodeRange, resolveEditorTarget } from '../editor/location-utils';
+import { mcpRangeToVsCodeRange, normalizeEditorTargetInput, resolveEditorTarget } from '../editor/location-utils';
 
 suite('Editor Location Utilities', () => {
     teardown(() => {
@@ -28,6 +28,20 @@ suite('Editor Location Utilities', () => {
         assert.strictEqual(withDefaults.start.character, 0);
         assert.strictEqual(withDefaults.end.line, 8);
         assert.strictEqual(withDefaults.end.character, 0);
+    });
+
+    test('normalizes editor target inputs into explicit target modes', () => {
+        const fileUri = vscode.Uri.file('/workspace/src/example.ts');
+
+        assert.deepStrictEqual(normalizeEditorTargetInput({}), { kind: 'activeEditor' });
+        assert.deepStrictEqual(normalizeEditorTargetInput({ path: 'src\\example.ts' }), { kind: 'workspacePath', path: 'src/example.ts' });
+        const uriTarget = normalizeEditorTargetInput({ uri: fileUri.toString() });
+        assert.strictEqual(uriTarget.kind, 'documentUri');
+        assert.strictEqual(uriTarget.uri.toString(), fileUri.toString());
+        assert.throws(
+            () => normalizeEditorTargetInput({ path: 'src/example.ts', uri: fileUri.toString() }),
+            /Provide either path or uri, not both\./
+        );
     });
 
     test('rejects workspace-relative paths that escape the workspace', async () => {

@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
-import { registerSymbolTools } from '../tools/symbol-tools';
+import { getSymbolHoverInfo, registerSymbolTools } from '../tools/symbol-tools';
 
 suite('Symbol MCP Tools', () => {
     teardown(() => {
@@ -19,6 +19,17 @@ suite('Symbol MCP Tools', () => {
         registerSymbolTools(server as any);
         return registeredTools;
     }
+
+    test('converts unknown hover content values to strings', async () => {
+        const uri = vscode.Uri.file('/workspace/src/example.ts');
+        sinon.stub(vscode.commands, 'executeCommand').resolves([
+            { contents: [{ value: 42 }] } as unknown as vscode.Hover
+        ]);
+
+        const result = await getSymbolHoverInfo(uri, new vscode.Position(0, 0));
+
+        assert.deepStrictEqual(result.hovers[0].contents, ['42']);
+    });
 
     test('rejects traversal before document symbol filesystem lookup', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');

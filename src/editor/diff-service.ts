@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { DiffId, toDiffId } from './ids';
 import { isUriInsideWorkspace } from './location-utils';
 
 export interface DiffEntryInput {
@@ -18,6 +19,27 @@ export interface OpenDiffInput {
     maxFiles?: number;
 }
 
+export type NonEmptyArray<T> = [T, ...T[]];
+
+export type DiffRequest =
+    | {
+        mode: 'source';
+        title: string;
+        leftUri: string;
+        rightUri: string;
+        include: string[];
+        exclude: string[];
+        maxFiles?: number;
+    }
+    | {
+        mode: 'entries';
+        title: string;
+        entries: NonEmptyArray<DiffEntryInput>;
+        include: string[];
+        exclude: string[];
+        maxFiles?: number;
+    };
+
 export interface NormalizedDiffEntry {
     label?: string;
     leftUri?: string;
@@ -25,7 +47,7 @@ export interface NormalizedDiffEntry {
 }
 
 export interface OpenDiffResult {
-    diffId: string;
+    diffId: DiffId;
     title: string;
     count: number;
     entries: NormalizedDiffEntry[];
@@ -34,7 +56,7 @@ export interface OpenDiffResult {
 export interface StoredDiff extends OpenDiffResult {}
 
 export interface DiffEntryMatch {
-    diffId: string;
+    diffId: DiffId;
     title: string;
     entryIndex: number;
     label?: string;
@@ -95,6 +117,61 @@ function hasSourceMode(input: OpenDiffInput): boolean {
 
 function hasExplicitEntryMode(input: OpenDiffInput): boolean {
     return Array.isArray(input.entries);
+}
+
+export function normalizeDiffRequest(input: OpenDiffInput): DiffRequest {
+    const sourceMode = hasSourceMode(input);
+    const explicitEntryMode = hasExplicitEntryMode(input);
+
+    if (sourceMode === explicitEntryMode) {
+        throw new Error('Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.');
+    }
+
+    const title = input.title ?? 'Code Diff';
+    const include = input.include ?? [];
+    const exclude = input.exclude ?? [];
+
+    if (sourceMode) {
+        if (!input.leftUri || !input.rightUri) {
+            throw new Error('Source-mode diffs require both leftUri and rightUri.');
+        }
+
+        const request: Extract<DiffRequest, { mode: 'source' }> = {
+            mode: 'source',
+            title,
+            leftUri: input.leftUri,
+            rightUri: input.rightUri,
+            include,
+            exclude
+        };
+        if (input.maxFiles !== undefined) {
+            request.maxFiles = input.maxFiles;
+        }
+
+        return request;
+    }
+
+    const entries = input.entries ?? [];
+    if (entries.length === 0) {
+        throw new Error('Explicit diff entry mode requires at least one entry.');
+    }
+
+    const request: Extract<DiffRequest, { mode: 'entries' }> = {
+        mode: 'entries',
+        title,
+        entries: entries as NonEmptyArray<DiffEntryInput>,
+        include,
+        exclude
+    };
+    if (input.maxFiles !== undefined) {
+        request.maxFiles = input.maxFiles;
+    }
+
+    return request;
+}
+
+function isDiffRequest(input: OpenDiffInput | DiffRequest): input is DiffRequest {
+    return 'mode' in input;
 }
 
 function parseDocumentUri(uri: string, fieldName: string): vscode.Uri {
@@ -336,7 +413,7 @@ async function collectFilePaths(fileSystem: DiffFileSystem, root: vscode.Uri, cu
 }
 
 export class EditorDiffService {
-    private readonly diffs = new Map<string, StoredDiff>();
+    private readonly diffs = new Map<DiffId, StoredDiff>();
     private readonly fileSystem: DiffFileSystem;
     private readonly injectedGitApi?: GitApi;
     private nextDiffNumber = 1;
@@ -346,25 +423,18 @@ export class EditorDiffService {
         this.injectedGitApi = options.gitApi;
     }
 
-    public async openDiff(input: OpenDiffInput): Promise<OpenDiffResult> {
-        const sourceMode = hasSourceMode(input);
-        const explicitEntryMode = hasExplicitEntryMode(input);
+    public async openDiff(input: OpenDiffInput | DiffRequest): Promise<OpenDiffResult> {
+        const request = isDiffRequest(input) ? input : normalizeDiffRequest(input);
+        const normalized = request.mode === 'source'
+            ? await this.normalizeSourceEntries(request)
+            : this.normalizeExplicitEntries(request.entries);
+        this.assertCanOpenEntryCount(normalized.length, request.maxFiles);
 
-        if (sourceMode === explicitEntryMode) {
-            throw new Error('Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.');
-        }
-
-        const normalized = sourceMode
-            ? await this.normalizeSourceEntries(input)
-            : this.normalizeExplicitEntries(input.entries ?? []);
-        this.assertCanOpenEntryCount(normalized.length, input.maxFiles);
-
-        const title = input.title ?? 'Code Diff';
-        await vscode.commands.executeCommand('vscode.changes', title, normalized.map(entry => entry.commandEntry));
+        await vscode.commands.executeCommand('vscode.changes', request.title, normalized.map(entry => entry.commandEntry));
 
         const result: OpenDiffResult = {
             diffId: this.createDiffId(),
-            title,
+            title: request.title,
             count: normalized.length,
             entries: normalized.map(entry => entry.entry)
         };
@@ -374,7 +444,7 @@ export class EditorDiffService {
     }
 
     public getDiff(diffId: string): StoredDiff | undefined {
-        return this.diffs.get(diffId);
+        return this.diffs.get(toDiffId(diffId));
     }
 
     public listDiffs(): StoredDiff[] {
@@ -401,7 +471,7 @@ export class EditorDiffService {
         this.diffs.clear();
     }
 
-    private normalizeExplicitEntries(entries: DiffEntryInput[]): NormalizedCommandEntry[] {
+    private normalizeExplicitEntries(entries: NonEmptyArray<DiffEntryInput>): NormalizedCommandEntry[] {
         if (entries.length === 0) {
             throw new Error('Explicit diff entry mode requires at least one entry.');
         }
@@ -409,11 +479,7 @@ export class EditorDiffService {
         return entries.map(normalizeExplicitEntry);
     }
 
-    private async normalizeSourceEntries(input: OpenDiffInput): Promise<NormalizedCommandEntry[]> {
-        if (!input.leftUri || !input.rightUri) {
-            throw new Error('Source-mode diffs require both leftUri and rightUri.');
-        }
-
+    private async normalizeSourceEntries(input: Extract<DiffRequest, { mode: 'source' }>): Promise<NormalizedCommandEntry[]> {
         const left = parseSourceUri(input.leftUri, 'leftUri');
         const right = parseSourceUri(input.rightUri, 'rightUri');
         const leftStat = await this.fileSystem.stat(left.fileUri);
@@ -473,7 +539,7 @@ export class EditorDiffService {
         return gitExtension.getAPI(1);
     }
 
-    private async normalizeGitFolderEntries(left: ParsedSourceUri, right: ParsedSourceUri, input: OpenDiffInput): Promise<NormalizedCommandEntry[]> {
+    private async normalizeGitFolderEntries(left: ParsedSourceUri, right: ParsedSourceUri, input: DiffRequest): Promise<NormalizedCommandEntry[]> {
         const gitApi = await this.getGitApi();
         const repository = gitApi.getRepository(left.fileUri) ?? gitApi.getRepository(right.fileUri);
         if (!repository) {
@@ -550,7 +616,7 @@ export class EditorDiffService {
         return fileUri;
     }
 
-    private async normalizeFolderEntries(leftRoot: vscode.Uri, rightRoot: vscode.Uri, input: OpenDiffInput): Promise<NormalizedCommandEntry[]> {
+    private async normalizeFolderEntries(leftRoot: vscode.Uri, rightRoot: vscode.Uri, input: DiffRequest): Promise<NormalizedCommandEntry[]> {
         const leftPaths = new Set(await collectFilePaths(this.fileSystem, leftRoot));
         const rightPaths = new Set(await collectFilePaths(this.fileSystem, rightRoot));
         const allPaths = Array.from(new Set([...leftPaths, ...rightPaths])).sort();
@@ -594,8 +660,8 @@ export class EditorDiffService {
         }
     }
 
-    private createDiffId(): string {
-        const diffId = `diff-${this.nextDiffNumber}`;
+    private createDiffId(): DiffId {
+        const diffId = toDiffId(`diff-${this.nextDiffNumber}`);
         this.nextDiffNumber += 1;
         return diffId;
     }

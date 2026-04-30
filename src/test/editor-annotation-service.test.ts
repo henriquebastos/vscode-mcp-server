@@ -38,6 +38,32 @@ suite('Editor Annotation Service', () => {
         return service;
     }
 
+    test('rejects empty annotation ids before applying highlights', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const activeEditor = {
+            document: { uri: documentUri },
+            selection: new vscode.Selection(0, 0, 0, 0),
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+
+        const service = createAnnotationService();
+
+        await assert.rejects(
+            () => service.setHighlights({
+                id: '',
+                ranges: [{ start: { line: 1, character: 0 }, end: { line: 1, character: 4 } }]
+            }),
+            /AnnotationId must not be empty/
+        );
+    });
+
     test('sets and clears highlights by document URI for virtual diff documents', async () => {
         const gitUri = vscode.Uri.parse('git:/workspace/src/example.ts?%7B%22ref%22%3A%22main%22%7D');
         const originalSelection = new vscode.Selection(0, 0, 0, 0);

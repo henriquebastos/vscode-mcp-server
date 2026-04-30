@@ -30,8 +30,13 @@
         },
         "vscode-mcp-server.host": {
           "type": "string",
+          "enum": [
+            "127.0.0.1",
+            "localhost",
+            "::1"
+          ],
           "default": "127.0.0.1",
-          "description": "Host address for the MCP server"
+          "description": "Loopback host address for the MCP server"
         },
         "vscode-mcp-server.defaultEnabled": {
           "type": "boolean",
@@ -40,10 +45,10 @@
         },
         "vscode-mcp-server.enabledTools": {
           "type": "object",
+          "additionalProperties": false,
           "default": {
             "file": true,
             "edit": true,
-            "shell": true,
             "diagnostics": true,
             "symbol": true,
             "editor": true
@@ -56,10 +61,6 @@
             "edit": {
               "type": "boolean",
               "description": "Enable file editing tools (create, edit, delete files)"
-            },
-            "shell": {
-              "type": "boolean",
-              "description": "Enable shell command execution tools"
             },
             "diagnostics": {
               "type": "boolean",
@@ -79,10 +80,6 @@
       }
     },
     "commands": [
-      {
-        "command": "vscode-mcp-server.helloWorld",
-        "title": "Hello World"
-      },
       {
         "command": "vscode-mcp-server.showServerInfo",
         "title": "Show MCP Server Information"

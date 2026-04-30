@@ -1,12 +1,10 @@
 import express from "express";
-import * as vscode from 'vscode';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Server } from 'http';
 import { Request, Response } from 'express';
 import { registerFileTools, FileListingCallback } from './tools/file-tools';
 import { registerEditTools } from './tools/edit-tools';
-import { registerShellTools } from './tools/shell-tools';
 import { registerDiagnosticsTools } from './tools/diagnostics-tools';
 import { registerSymbolTools } from './tools/symbol-tools';
 import { disposeEditorAnnotationService } from './editor/annotation-service';
@@ -18,7 +16,6 @@ import { logger } from './utils/logger';
 export interface ToolConfiguration {
     file: boolean;
     edit: boolean;
-    shell: boolean;
     diagnostics: boolean;
     symbol: boolean;
     editor: boolean;
@@ -32,21 +29,18 @@ export class MCPServer {
     private port: number;
     private host: string;
     private fileListingCallback?: FileListingCallback;
-    private terminal?: vscode.Terminal;
     private toolConfig: ToolConfiguration;
 
     public setFileListingCallback(callback: FileListingCallback) {
         this.fileListingCallback = callback;
     }
 
-    constructor(port: number = 3000, host: string = '127.0.0.1', terminal?: vscode.Terminal, toolConfig?: ToolConfiguration) {
+    constructor(port: number = 3000, host: string = '127.0.0.1', toolConfig?: ToolConfiguration) {
         this.port = port;
         this.host = host;
-        this.terminal = terminal;
         this.toolConfig = toolConfig || {
             file: true,
             edit: true,
-            shell: true,
             diagnostics: true,
             symbol: true,
             editor: true
@@ -74,7 +68,6 @@ export class MCPServer {
 
         // Note: setupTools() is no longer called here
         this.setupRoutes();
-        this.setupEventHandlers();
     }
     
     public setupTools(): void {
@@ -98,14 +91,6 @@ export class MCPServer {
             logger.info('MCP edit tools registered successfully');
         } else {
             logger.info('MCP edit tools disabled by configuration');
-        }
-        
-        // Register shell tools if enabled
-        if (this.toolConfig.shell) {
-            registerShellTools(this.server, this.terminal);
-            logger.info('MCP shell tools registered successfully');
-        } else {
-            logger.info('MCP shell tools disabled by configuration');
         }
         
         // Register diagnostics tools if enabled
@@ -211,21 +196,25 @@ export class MCPServer {
         });
     }
 
-    private setupEventHandlers(): void {
-        // Log HTTP server events
-        if (this.httpServer) {
-            this.httpServer.on('error', (error: Error) => {
+    private listen(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const httpServer = this.app.listen(this.port, this.host);
+            this.httpServer = httpServer;
+
+            httpServer.once('listening', () => {
+                logger.info('[Server] HTTP Server ready');
+                resolve();
+            });
+
+            httpServer.once('error', (error: Error) => {
                 logger.error(`[Server] HTTP Server Error: ${error.message}`);
+                reject(error);
             });
 
-            this.httpServer.on('listening', () => {
-                logger.info(`[Server] HTTP Server ready`);
+            httpServer.once('close', () => {
+                logger.info('[Server] HTTP Server closed');
             });
-
-            this.httpServer.on('close', () => {
-                logger.info(`[Server] HTTP Server closed`);
-            });
-        }
+        });
     }
 
     public async start(): Promise<void> {
@@ -243,20 +232,13 @@ export class MCPServer {
             // Start HTTP server
             logger.info('[MCPServer.start] Starting HTTP server');
             const httpServerStartTime = Date.now();
-            
-            return new Promise((resolve) => {
-                // Bind to localhost only for security
-                this.httpServer = this.app.listen(this.port, this.host, () => {
-                    const httpStartTime = Date.now() - httpServerStartTime;
-                    logger.info(`[MCPServer.start] HTTP Server started (took ${httpStartTime}ms)`);
-                    logger.info(`MCP Server listening on ${this.host}:${this.port}`);
-                    
-                    const totalTime = Date.now() - startTime;
-                    logger.info(`[MCPServer.start] Server startup complete (total: ${totalTime}ms)`);
-                    
-                    resolve();
-                });
-            });
+            await this.listen();
+            const httpStartTime = Date.now() - httpServerStartTime;
+            logger.info(`[MCPServer.start] HTTP Server started (took ${httpStartTime}ms)`);
+            logger.info(`MCP Server listening on ${this.host}:${this.port}`);
+
+            const totalTime = Date.now() - startTime;
+            logger.info(`[MCPServer.start] Server startup complete (total: ${totalTime}ms)`);
         } catch (error) {
             logger.error(`[MCPServer.start] Failed to start MCP Server: ${error instanceof Error ? error.message : String(error)}`);
             throw error;

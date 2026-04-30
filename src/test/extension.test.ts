@@ -18,6 +18,8 @@ suite('Extension Test Suite', () => {
     let createStatusBarItemStub: sinon.SinonStub;
     let registerCommandStub: sinon.SinonStub;
     let onDidChangeConfigurationStub: sinon.SinonStub;
+    let showInformationMessageStub: sinon.SinonStub;
+    let showErrorMessageStub: sinon.SinonStub;
     let disposeFeedbackCaptureService: sinon.SinonSpy;
 
     setup(() => {
@@ -78,6 +80,9 @@ suite('Extension Test Suite', () => {
         onDidChangeConfigurationStub = sinon.stub(vscode.workspace, 'onDidChangeConfiguration').returns({
             dispose: sinon.spy()
         });
+
+        showInformationMessageStub = sinon.stub(vscode.window, 'showInformationMessage').resolves(undefined);
+        showErrorMessageStub = sinon.stub(vscode.window, 'showErrorMessage').resolves(undefined);
     });
 
     teardown(() => {
@@ -105,7 +110,7 @@ suite('Extension Test Suite', () => {
 
         await extension.activate(context);
 
-        const toolConfig = MockServerConstructor.firstCall.args[3];
+        const toolConfig = MockServerConstructor.firstCall.args[2];
         assert.strictEqual(toolConfig.editor, true, 'Editor tools were not enabled by default');
     });
 
@@ -115,7 +120,7 @@ suite('Extension Test Suite', () => {
 
         await extension.activate(context);
 
-        const toolConfig = MockServerConstructor.firstCall.args[3];
+        const toolConfig = MockServerConstructor.firstCall.args[2];
         assert.strictEqual(toolConfig.editor, false, 'Editor tools ignored disabled configuration');
     });
 
@@ -143,6 +148,25 @@ suite('Extension Test Suite', () => {
         assert.strictEqual(showServerInfoCall !== undefined, true, 'Server info command not registered');
     });
 
+    test('Server info formats IPv6 loopback hosts as bracketed URLs', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(true);
+        workspaceConfig.get.withArgs('host', '127.0.0.1').returns('::1');
+
+        await extension.activate(context);
+
+        const showServerInfoCall = registerCommandStub.getCalls().find(
+            call => call.args[0] === 'vscode-mcp-server.showServerInfo'
+        );
+        assert.ok(showServerInfoCall, 'Server info command not registered');
+
+        showServerInfoCall.args[1]();
+
+        assert.strictEqual(
+            showInformationMessageStub.lastCall.args[0],
+            'MCP Server is running at http://[::1]:4321/mcp'
+        );
+    });
+
     test('Guided feedback commands should be registered', async () => {
         await extension.activate(context);
 
@@ -158,6 +182,116 @@ suite('Extension Test Suite', () => {
         
         // Check that the listener was registered
         assert.strictEqual(onDidChangeConfigurationStub.called, true, 'Configuration change listener not registered');
+    });
+
+    test('Toggle-on awaits persisted enabled state before starting the server', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(false);
+        await extension.activate(context);
+
+        let resolveUpdate!: () => void;
+        const updatePromise = new Promise<void>(resolve => {
+            resolveUpdate = resolve;
+        });
+        context.globalState.update = sinon.stub().returns(updatePromise);
+
+        const toggleServerCall = registerCommandStub.getCalls().find(
+            call => call.args[0] === 'vscode-mcp-server.toggleServer'
+        );
+        assert.ok(toggleServerCall, 'Toggle server command not registered');
+
+        const togglePromise = toggleServerCall.args[1]();
+        await Promise.resolve();
+
+        assert.strictEqual(MockServerConstructor.notCalled, true, 'Server started before enabled state persisted');
+        resolveUpdate();
+        await togglePromise;
+
+        assert.strictEqual(MockServerConstructor.calledOnce, true, 'Server did not start after enabled state persisted');
+        assert.strictEqual(showInformationMessageStub.called, true, 'Toggle did not report server start');
+    });
+
+    test('Runtime configuration changes restart an enabled server for watched keys', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(true);
+        await extension.activate(context);
+
+        const listener = onDidChangeConfigurationStub.firstCall.args[0];
+        const watchedSections = [
+            'vscode-mcp-server.port',
+            'vscode-mcp-server.host',
+            'vscode-mcp-server.enabledTools'
+        ];
+
+        for (const [index, watchedSection] of watchedSections.entries()) {
+            await listener({
+                affectsConfiguration: (section: string) => section === watchedSection
+            });
+
+            assert.strictEqual(mockMCPServer.stop.callCount, index + 1, `Enabled server was not stopped for ${watchedSection} change`);
+            assert.strictEqual(MockServerConstructor.callCount, index + 2, `Enabled server was not recreated for ${watchedSection} change`);
+            assert.strictEqual(mockMCPServer.start.callCount, index + 2, `Recreated server was not started for ${watchedSection} change`);
+        }
+    });
+
+    test('Invalid runtime configuration changes stop the enabled server and roll back state', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(true);
+        const updateStub = sinon.stub().resolves();
+        context.globalState.update = updateStub;
+
+        await extension.activate(context);
+        workspaceConfig.get.withArgs('host', '127.0.0.1').returns('0.0.0.0');
+
+        const listener = onDidChangeConfigurationStub.firstCall.args[0];
+        await listener({
+            affectsConfiguration: (section: string) => section === 'vscode-mcp-server.host'
+        });
+
+        assert.strictEqual(mockMCPServer.stop.calledOnce, true, 'Enabled server was not stopped for invalid host change');
+        assert.deepStrictEqual(updateStub.getCalls().map(call => call.args), [['mcpServerEnabled', false]]);
+        assert.strictEqual(statusBarItem.text, '$(server) MCP Server: Off', 'Status bar did not roll back to off');
+        assert.strictEqual(showErrorMessageStub.calledOnce, true, 'Invalid runtime change did not report an error');
+    });
+
+    test('Toggle-on rolls back persisted state and status when server start fails', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(false);
+        mockMCPServer.start.rejects(new Error('port busy'));
+        const updateStub = sinon.stub().resolves();
+        context.globalState.update = updateStub;
+
+        await extension.activate(context);
+
+        const toggleServerCall = registerCommandStub.getCalls().find(
+            call => call.args[0] === 'vscode-mcp-server.toggleServer'
+        );
+        assert.ok(toggleServerCall, 'Toggle server command not registered');
+
+        await toggleServerCall.args[1]();
+
+        assert.deepStrictEqual(
+            updateStub.getCalls().map(call => call.args),
+            [
+                ['mcpServerEnabled', true],
+                ['mcpServerEnabled', false]
+            ],
+            'Failed toggle did not persist true then roll back to false'
+        );
+        assert.strictEqual(statusBarItem.text, '$(server) MCP Server: Off', 'Status bar did not roll back to off');
+        assert.strictEqual(showErrorMessageStub.calledOnce, true, 'Failed toggle did not report an error');
+    });
+
+    test('Activation startup failure keeps controls registered and rolls back persisted state', async () => {
+        mockMCPServer.start.rejects(new Error('port busy'));
+        context.globalState.get = sinon.stub().withArgs('mcpServerEnabled', false).returns(true);
+        const updateStub = sinon.stub().resolves();
+        context.globalState.update = updateStub;
+
+        await extension.activate(context);
+
+        const registeredCommandIds = registerCommandStub.getCalls().map(call => call.args[0]);
+        assert.ok(registeredCommandIds.includes('vscode-mcp-server.toggleServer'), 'Toggle command not registered after startup failure');
+        assert.ok(registeredCommandIds.includes('vscode-mcp-server.showServerInfo'), 'Info command not registered after startup failure');
+        assert.deepStrictEqual(updateStub.getCalls().map(call => call.args), [['mcpServerEnabled', false]]);
+        assert.strictEqual(statusBarItem.text, '$(server) MCP Server: Off', 'Status bar did not roll back to off');
+        assert.strictEqual(showErrorMessageStub.calledOnce, true, 'Activation failure did not report an error');
     });
 
     test('Deactivate should clean up resources', async () => {

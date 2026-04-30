@@ -2,8 +2,6 @@
 
 A Visual Studio Code extension (available on the [Marketplace](https://marketplace.visualstudio.com/items?itemName=JuehangQin.vscode-mcp-server)) that allows Claude and other MCP clients to code directly in VS Code! Inspired by [Serena](https://github.com/oraios/serena), but using VS Code's built-in capabilities. Perfect for extending existing coding agents like Claude Code with VS Code-specific capabilities (symbol search, document outlines) without duplicating tools they already have. Note that this extension uses the streamable HTTP API, not the SSE API.
 
-This extension can allow for execution of shell commands. This means that there is a potential security risk, so use with caution, and ensure that you trust the MCP client that you are using and that the port is not exposed to anything. Authentication would help, but as the MCP authentication spec is still in flux, this has not been implemented for now.
-
 PRs are welcome!
 
 ## Demo Video
@@ -80,7 +78,9 @@ Use VS Code symbol tools to reduce context consumption:
 
 
 
-This extension serves as a Model Context Protocol (MCP) server, exposing VS Code's filesystem and editing capabilities to MCP clients.
+This extension serves as a loopback-only Model Context Protocol (MCP) server, exposing VS Code's filesystem and editing capabilities to local MCP clients.
+
+The server binds only to loopback hosts, but it does not implement authentication. Only enable it for trusted local MCP clients and be aware that local processes can attempt to call the server while it is running.
 
 ## Features
 
@@ -96,7 +96,6 @@ The VS Code MCP Server extension implements an MCP-compliant server that allows 
 - **Create new files** using VS Code's WorkspaceEdit API
 - **Make line replacements** in files
 - **Check for diagnostics** (errors and warnings) in your workspace
-- **Execute shell commands** in the integrated terminal with shell integration
 - **Toggle the server** on and off via a status bar item
 - **Open native VS Code diffs** from URI sources or explicit file-pair entries, then annotate the returned document URIs
 - **Capture guided editor feedback** from selected source or diff ranges using editor title toolbar actions, then let an agent retrieve the structured batch
@@ -256,28 +255,16 @@ The extension creates an MCP server that:
 - **clear_annotations_code**: Clears temporary highlights, inline callouts, CodeLens notes, hover notes, gutter markers, and Guided Explanation comments by id, path, URI, or globally.
 - **go_to_definition_code**: Navigates VS Code to the first symbol definition and returns the resulting location.
 
-### Shell Tools
-- **execute_shell_command_code**: Executes a shell command in the VS Code integrated terminal with shell integration
-  - Parameters:
-    - `command`: The shell command to execute
-    - `cwd` (optional): Optional working directory for the command (default: '.')
-
-  This tool is useful for:
-  - Running CLI commands and build operations
-  - Executing git commands
-  - Performing any shell operations that require terminal access
-  - Getting command output for analysis and further processing
-
 ## Caveats/TODO
 
-Currently, only one workspace is supported. The extension also only works locally, to avoid exposing your VS Code instance to any network you may be connected to.
+Currently, only one workspace is supported. The extension only supports loopback-only hosts (`127.0.0.1`, `localhost`, or `::1`) to avoid exposing your VS Code instance to any network you may be connected to.
 
 ## Extension Settings
 
 * `vscode-mcp-server.port`: The port number for the MCP server (default: 3000)
-* `vscode-mcp-server.host`: Host address for the MCP server (default: 127.0.0.1)
+* `vscode-mcp-server.host`: Loopback-only host for the MCP server: 127.0.0.1, localhost, or ::1 (default: 127.0.0.1)
 * `vscode-mcp-server.defaultEnabled`: Whether the MCP server should be enabled by default on VS Code startup
-* `vscode-mcp-server.enabledTools`: Configure which tool categories are enabled (file, edit, shell, diagnostics, symbol, editor)
+* `vscode-mcp-server.enabledTools`: Configure which tool categories are enabled (file, edit, diagnostics, symbol, editor)
 
 **Selective Tool Configuration**: Useful for coding agents that already have certain capabilities. For example, with Claude Code you might disable file/edit tools and only enable symbol tools to add VS Code-specific symbol searching without tool duplication.
 
@@ -288,9 +275,9 @@ To connect MCP clients to this server, configure them to use:
 http://localhost:3000/mcp
 ```
 
-Or if you've configured a custom host:
+If you select the IPv6 loopback host, use the bracketed URL form:
 ```
-http://[your-host]:3000/mcp
+http://[::1]:3000/mcp
 ```
 
 Remember that you need to enable the server first by clicking on the status bar item!

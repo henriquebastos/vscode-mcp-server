@@ -1,11 +1,16 @@
 import * as vscode from 'vscode';
-import { DiffEntryMatch, getEditorDiffService } from './diff-service';
-import { DiffId, FeedbackItemId, FeedbackSessionId, toFeedbackItemId, toFeedbackSessionId } from './ids';
-import { SerializedRange, isUriInsideWorkspace, uriToWorkspacePath, vsCodeRangeToSerializedRange } from './location-utils';
+import { getEditorDiffService } from './diff-service';
+import type { DiffEntryMatch } from './diff-service';
+import { feedbackReducer } from './feedback-state';
+import type { FeedbackClearScope, FeedbackSessionState, FeedbackSessionStatus } from './feedback-state';
+import { toFeedbackItemId, toFeedbackSessionId } from './ids';
+import type { DiffId, FeedbackItemId, FeedbackSessionId } from './ids';
+import { isUriInsideWorkspace, uriToWorkspacePath, vsCodeRangeToSerializedRange } from './location-utils';
+import type { SerializedRange } from './location-utils';
 
 const DEFAULT_MAX_SELECTED_TEXT_CHARACTERS = 4000;
 
-export type FeedbackSessionStatus = 'draft' | 'ready' | 'drained' | 'cancelled';
+export type { FeedbackClearScope, FeedbackSessionStatus } from './feedback-state';
 
 export interface FeedbackDiffMetadata {
     diffId: DiffId;
@@ -43,8 +48,6 @@ export interface AddFeedbackInput {
     maxSelectedTextCharacters?: number;
 }
 
-export type FeedbackClearScope = FeedbackSessionStatus | 'all';
-
 export interface ClearFeedbackInput {
     scope?: FeedbackClearScope;
 }
@@ -65,12 +68,6 @@ interface StoredFeedbackItem {
     item: FeedbackItem;
     uri: vscode.Uri;
     range: vscode.Range;
-}
-
-interface FeedbackSessionState {
-    id: FeedbackSessionId;
-    status: FeedbackSessionStatus;
-    items: StoredFeedbackItem[];
 }
 
 function defaultId(prefix: string): string {
@@ -133,7 +130,7 @@ function createMarkerHover(item: FeedbackItem): vscode.MarkdownString {
 }
 
 export class FeedbackCaptureService {
-    private session: FeedbackSessionState | undefined;
+    private session: FeedbackSessionState<StoredFeedbackItem> | undefined;
     private readonly markerDecorationType: vscode.TextEditorDecorationType;
     private readonly visibleEditorChangeDisposable: vscode.Disposable;
     private readonly createSessionId: () => FeedbackSessionId;
@@ -166,12 +163,15 @@ export class FeedbackCaptureService {
             throw new Error(`Feedback capture is not available for this document URI: ${editor.document.uri.toString()}`);
         }
 
-        const session = this.getOrCreateDraftSession();
+        const currentDraftCount = this.session?.status === 'draft' ? this.session.items.length : 0;
+        const sessionId = !this.session || this.session.status === 'cancelled' || this.session.status === 'drained'
+            ? this.createSessionId()
+            : this.session.id;
         const maxSelectedTextCharacters = input.maxSelectedTextCharacters ?? DEFAULT_MAX_SELECTED_TEXT_CHARACTERS;
         const selectedText = truncateText(editor.document.getText(editor.selection), maxSelectedTextCharacters);
         const item: FeedbackItem = {
             id: this.createItemId(),
-            order: session.items.length + 1,
+            order: currentDraftCount + 1,
             createdAt: this.now().toISOString(),
             uri: editor.document.uri.toString(),
             path: workspacePathIfAvailable(editor.document.uri),
@@ -185,64 +185,53 @@ export class FeedbackCaptureService {
             diff: serializeDiffMetadata(getEditorDiffService().findEntryForUri(editor.document.uri))
         };
 
-        session.items.push({ item, uri: editor.document.uri, range: editor.selection });
+        const transition = feedbackReducer(this.session, {
+            type: 'add',
+            sessionId,
+            item: { item, uri: editor.document.uri, range: editor.selection }
+        });
+        this.session = transition.state;
         this.reapplyMarkers();
 
-        return this.snapshot(session);
+        return this.snapshot(this.session!);
     }
 
     public async finishFeedback(): Promise<FeedbackSessionSnapshot> {
-        if (!this.session || this.session.items.length === 0) {
-            throw new Error('No feedback has been captured yet.');
-        }
-        if (this.session.status === 'draft') {
-            this.session.status = 'ready';
-        } else if (this.session.status !== 'ready') {
-            throw new Error(`Cannot finish a feedback session that is ${this.session.status}.`);
-        }
+        const transition = feedbackReducer(this.session, { type: 'finish' });
+        this.session = transition.state;
         this.reapplyMarkers();
 
-        return this.snapshot(this.session);
+        return this.snapshot(this.session!);
     }
 
     public async cancelFeedback(): Promise<FeedbackSessionSnapshot> {
-        if (!this.session) {
-            throw new Error('No feedback session is active.');
-        }
-        this.session.status = 'cancelled';
-        this.session.items = [];
+        const transition = feedbackReducer(this.session, { type: 'cancel' });
+        this.session = transition.state;
         this.clearMarkers();
 
-        return this.snapshot(this.session);
+        return this.snapshot(this.session!);
     }
 
     public async drainFeedback(): Promise<FeedbackSessionSnapshot> {
-        if (!this.session || this.session.status !== 'ready') {
-            throw new Error('No ready feedback session is available to drain.');
-        }
-
-        const readySession = this.snapshot(this.session);
-        this.session.status = 'drained';
+        const transition = feedbackReducer(this.session, { type: 'drain' });
+        this.session = transition.state;
         this.clearMarkers();
 
-        return readySession;
+        return this.snapshot(transition.drained!);
     }
 
     public async clearFeedback(input: ClearFeedbackInput = {}): Promise<ClearFeedbackResult> {
         const scope = input.scope ?? 'all';
-        if (!this.session) {
-            return { cleared: false, scope };
+        const transition = feedbackReducer(this.session, { type: 'clear', scope });
+        this.session = transition.state;
+
+        if (!transition.cleared) {
+            return { cleared: false, scope, session: this.session ? this.snapshot(this.session) : undefined };
         }
 
-        if (scope !== 'all' && this.session.status !== scope) {
-            return { cleared: false, scope, session: this.snapshot(this.session) };
-        }
-
-        this.session.status = 'cancelled';
-        this.session.items = [];
         this.clearMarkers();
 
-        return { cleared: true, scope, session: this.snapshot(this.session) };
+        return { cleared: true, scope, session: this.snapshot(this.session!) };
     }
 
     public dispose(): void {
@@ -252,22 +241,7 @@ export class FeedbackCaptureService {
         this.markerDecorationType.dispose();
     }
 
-    private getOrCreateDraftSession(): FeedbackSessionState {
-        if (!this.session || this.session.status === 'cancelled' || this.session.status === 'drained') {
-            this.session = {
-                id: this.createSessionId(),
-                status: 'draft',
-                items: []
-            };
-        }
-        if (this.session.status !== 'draft') {
-            throw new Error(`Cannot add feedback while the current feedback session is ${this.session.status}. Finish processing or clear it first.`);
-        }
-
-        return this.session;
-    }
-
-    private snapshot(session: FeedbackSessionState): FeedbackSessionSnapshot {
+    private snapshot(session: FeedbackSessionState<StoredFeedbackItem>): FeedbackSessionSnapshot {
         return {
             id: session.id,
             status: session.status,

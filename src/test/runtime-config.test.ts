@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 import { resolveMcpConfig } from '../runtime-config';
 
 function workspaceConfiguration(values: Record<string, unknown> = {}): vscode.WorkspaceConfiguration {

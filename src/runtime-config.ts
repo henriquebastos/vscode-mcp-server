@@ -1,5 +1,5 @@
-import * as vscode from 'vscode';
-import { ToolConfiguration } from './server';
+import type * as vscode from 'vscode';
+import type { ToolConfiguration } from './server';
 
 export type LoopbackHost = '127.0.0.1' | 'localhost' | '::1';
 

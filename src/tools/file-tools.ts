@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { assertWorkspacePath, WorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { WorkspacePath} from '../workspace/workspace-boundary';
+import { assertWorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';
-import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 // Type for file listing results
 export type FileListingResult = Array<{path: string, type: 'file' | 'directory'}>;

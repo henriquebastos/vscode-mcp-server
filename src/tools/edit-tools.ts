@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { assertWorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';
-import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 /**
  * Creates a new file in the VS Code workspace using WorkspaceEdit

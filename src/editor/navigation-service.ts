@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
-import {
+import type {
     EditorTargetInput,
     McpPosition,
     McpRange,
-    SerializedRange,
+    SerializedRange} from './location-utils';
+import {
     mcpPositionToVsCodePosition,
     mcpRangeToVsCodeRange,
     resolveEditorTarget,

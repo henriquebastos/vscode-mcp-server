@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';
-import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { assertWorkspacePath, getSingleWorkspaceRoot, isUriInsideWorkspace, uriToWorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
 import { logger } from '../utils/logger';
 

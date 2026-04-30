@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
+import type {
+    WorkspacePath} from '../workspace/workspace-boundary';
 import {
-    WorkspacePath,
     assertWorkspacePath,
     getSingleWorkspaceRoot,
     isUriInsideWorkspace,

@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { feedbackReducer, FeedbackSessionState } from '../editor/feedback-state';
+import type { FeedbackSessionState } from '../editor/feedback-state';
+import { feedbackReducer } from '../editor/feedback-state';
 import { toFeedbackSessionId } from '../editor/ids';
 
 interface TestFeedbackItem {

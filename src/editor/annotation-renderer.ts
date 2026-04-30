@@ -65,23 +65,29 @@ function kindOverviewColor(kind: AnnotationKind): vscode.ThemeColor {
 }
 
 function createHighlightDecorationOptions(kind: AnnotationKind): vscode.DecorationRenderOptions {
-    return {
+    const options: vscode.DecorationRenderOptions = {
         backgroundColor: kindBackgroundColor(kind),
-        opacity: kind === 'previous' ? '0.65' : undefined,
         overviewRulerColor: kindOverviewColor(kind),
         overviewRulerLane: vscode.OverviewRulerLane.Right
     };
+    if (kind === 'previous') {
+        options.opacity = '0.65';
+    }
+    return options;
 }
 
 function createCalloutDecorationOptions(kind: AnnotationKind): vscode.DecorationRenderOptions {
-    return {
-        after: {
-            margin: '0 0 0 1rem',
-            color: kindThemeColor(kind),
-            fontWeight: kind === 'focus' || kind === 'question' || kind === 'warning' ? '600' : undefined,
-            fontStyle: kind === 'previous' ? 'italic' : undefined
-        }
+    const after: vscode.ThemableDecorationAttachmentRenderOptions = {
+        margin: '0 0 0 1rem',
+        color: kindThemeColor(kind)
     };
+    if (kind === 'focus' || kind === 'question' || kind === 'warning') {
+        after.fontWeight = '600';
+    }
+    if (kind === 'previous') {
+        after.fontStyle = 'italic';
+    }
+    return { after };
 }
 
 function markerIconColor(kind: AnnotationKind): string {

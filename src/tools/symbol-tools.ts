@@ -154,8 +154,8 @@ export async function getSymbolHoverInfo(
         range?: {
             start: { line: number; character: number };
             end: { line: number; character: number };
-        };
-        preview?: string;
+        } | undefined;
+        preview?: string | undefined;
     }>;
 }> {
     logger.info(`[getSymbolHoverInfo] Getting hover info for ${uri.toString()} at position (${position.line},${position.character})`);

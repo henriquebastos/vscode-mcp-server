@@ -37,15 +37,28 @@ export class DiffRegistry {
         for (const diff of this.diffs.values()) {
             for (const [entryIndex, entry] of diff.entries.entries()) {
                 if (entry.leftUri === uriKey) {
-                    return { diffId: diff.diffId, title: diff.title, entryIndex, label: entry.label, side: 'left' };
+                    return this.buildMatch(diff, entryIndex, entry, 'left');
                 }
                 if (entry.rightUri === uriKey) {
-                    return { diffId: diff.diffId, title: diff.title, entryIndex, label: entry.label, side: 'right' };
+                    return this.buildMatch(diff, entryIndex, entry, 'right');
                 }
             }
         }
 
         return undefined;
+    }
+
+    private buildMatch(
+        diff: StoredDiff,
+        entryIndex: number,
+        entry: { label?: string },
+        side: 'left' | 'right'
+    ): DiffEntryMatch {
+        const match: DiffEntryMatch = { diffId: diff.diffId, title: diff.title, entryIndex, side };
+        if (entry.label !== undefined) {
+            match.label = entry.label;
+        }
+        return match;
     }
 
     public clear(): void {

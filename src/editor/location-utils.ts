@@ -11,8 +11,8 @@ import {
 export { isUriInsideWorkspace, uriToWorkspacePath } from '../workspace/workspace-boundary';
 
 export interface EditorTargetInput {
-    path?: string;
-    uri?: string;
+    path?: string | undefined;
+    uri?: string | undefined;
 }
 
 export type EditorTarget =
@@ -28,12 +28,12 @@ export interface ResolvedEditorTarget {
 
 export interface McpPosition {
     line: number;
-    character?: number;
+    character?: number | undefined;
 }
 
 export interface McpRange {
     start: McpPosition;
-    end?: McpPosition;
+    end?: McpPosition | undefined;
 }
 
 export interface SerializedRange {
@@ -127,20 +127,28 @@ export async function resolveEditorTarget(input: EditorTargetInput | EditorTarge
 
     if (target.kind === 'documentUri') {
         assertSafeEditorUri(target.uri, target.uri.toString());
-        return {
+        const resolved: ResolvedEditorTarget = {
             uri: target.uri,
-            path: editorUriPath(target.uri),
-            editor: findVisibleEditor(target.uri)
+            path: editorUriPath(target.uri)
         };
+        const editor = findVisibleEditor(target.uri);
+        if (editor) {
+            resolved.editor = editor;
+        }
+        return resolved;
     }
 
     if (target.kind === 'workspacePath') {
         const uri = workspacePathToUri(target.path);
-        return {
+        const resolved: ResolvedEditorTarget = {
             uri,
-            path: target.path,
-            editor: findVisibleEditor(uri)
+            path: target.path
         };
+        const editor = findVisibleEditor(uri);
+        if (editor) {
+            resolved.editor = editor;
+        }
+        return resolved;
     }
 
     const editor = vscode.window.activeTextEditor;

@@ -2,19 +2,19 @@ import type * as vscode from 'vscode';
 import type { DiffId } from './ids';
 
 export interface DiffEntryInput {
-    label?: string;
-    leftUri?: string;
-    rightUri?: string;
+    label?: string | undefined;
+    leftUri?: string | undefined;
+    rightUri?: string | undefined;
 }
 
 export interface OpenDiffInput {
-    title?: string;
-    leftUri?: string;
-    rightUri?: string;
-    entries?: DiffEntryInput[];
-    include?: string[];
-    exclude?: string[];
-    maxFiles?: number;
+    title?: string | undefined;
+    leftUri?: string | undefined;
+    rightUri?: string | undefined;
+    entries?: DiffEntryInput[] | undefined;
+    include?: string[] | undefined;
+    exclude?: string[] | undefined;
+    maxFiles?: number | undefined;
 }
 
 export type NonEmptyArray<T> = [T, ...T[]];

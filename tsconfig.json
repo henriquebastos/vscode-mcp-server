@@ -15,6 +15,7 @@
 		"noUncheckedIndexedAccess": true, /* Add 'undefined' to the type of indexed access results. */
 		"noImplicitReturns": true, /* Report error when not all code paths in function return a value. */
 		"noFallthroughCasesInSwitch": true, /* Report errors for fallthrough cases in switch statement. */
+		"exactOptionalPropertyTypes": true, /* Differentiate undefined and missing optional properties. */
 		// "noUnusedParameters": true,  /* Report errors on unused parameters. */
 	}
 }

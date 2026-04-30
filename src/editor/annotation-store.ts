@@ -166,7 +166,7 @@ function assignSurfaceEntries(group: AnnotationGroup, surface: AnnotationSurface
 
 export class AnnotationStore {
     private readonly groupsById = new Map<AnnotationId, AnnotationGroup>();
-    private readonly workspacePathForUri?: (uri: vscode.Uri) => string | undefined;
+    private readonly workspacePathForUri: ((uri: vscode.Uri) => string | undefined) | undefined;
 
     constructor(options: AnnotationStoreOptions = {}) {
         this.workspacePathForUri = options.workspacePathForUri;

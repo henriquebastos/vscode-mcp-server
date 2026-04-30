@@ -86,12 +86,15 @@ function serializeDiffMetadata(match: DiffEntryMatch | undefined): SerializedDif
         return undefined;
     }
 
-    return {
+    const metadata: SerializedDiffMetadata = {
         diffId: match.diffId,
         entryIndex: match.entryIndex,
-        label: match.label,
         side: match.side
     };
+    if (match.label !== undefined) {
+        metadata.label = match.label;
+    }
+    return metadata;
 }
 
 function serializeEditor(

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import {
+    EditorTargetInput,
     McpPosition,
     McpRange,
     SerializedRange,
@@ -17,14 +18,14 @@ export interface SerializedLocation {
 }
 
 export interface RevealRangeInput {
-    path?: string;
+    path?: string | undefined;
     range: McpRange;
 }
 
 export interface GoToDefinitionInput {
-    path?: string;
-    position?: McpPosition;
-    range?: McpRange;
+    path?: string | undefined;
+    position?: McpPosition | undefined;
+    range?: McpRange | undefined;
 }
 
 function toSerializedLocation(uri: vscode.Uri, range: vscode.Range): SerializedLocation {
@@ -48,7 +49,11 @@ async function getOrOpenEditor(uri: vscode.Uri, existingEditor?: vscode.TextEdit
 }
 
 export async function revealRange(input: RevealRangeInput): Promise<SerializedLocation> {
-    const target = await resolveEditorTarget({ path: input.path });
+    const targetInput: EditorTargetInput = {};
+    if (input.path !== undefined) {
+        targetInput.path = input.path;
+    }
+    const target = await resolveEditorTarget(targetInput);
     const range = mcpRangeToVsCodeRange(input.range);
     const editor = await getOrOpenEditor(target.uri, target.editor);
 
@@ -88,7 +93,11 @@ function definitionLocation(definition: vscode.Location | vscode.LocationLink): 
 }
 
 export async function goToDefinition(input: GoToDefinitionInput): Promise<SerializedLocation> {
-    const target = await resolveEditorTarget({ path: input.path });
+    const targetInput: EditorTargetInput = {};
+    if (input.path !== undefined) {
+        targetInput.path = input.path;
+    }
+    const target = await resolveEditorTarget(targetInput);
     const position = definitionPosition(input, target.editor);
     const definitions = await vscode.commands.executeCommand<Array<vscode.Location | vscode.LocationLink>>(
         'vscode.executeDefinitionProvider',

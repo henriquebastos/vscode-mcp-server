@@ -340,7 +340,7 @@ async function collectFilePaths(fileSystem: DiffFileSystem, root: vscode.Uri, cu
 
 export class DiffNormalizer {
     private readonly fileSystem: DiffFileSystem;
-    private readonly injectedGitApi?: GitApi;
+    private readonly injectedGitApi: GitApi | undefined;
 
     constructor(options: DiffNormalizerOptions = {}) {
         this.fileSystem = options.fileSystem ?? vscode.workspace.fs;

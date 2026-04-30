@@ -87,12 +87,15 @@ function serializeDiffMetadata(match: DiffEntryMatch | undefined): FeedbackDiffM
         return undefined;
     }
 
-    return {
+    const metadata: FeedbackDiffMetadata = {
         diffId: match.diffId,
         entryIndex: match.entryIndex,
-        label: match.label,
         side: match.side
     };
+    if (match.label !== undefined) {
+        metadata.label = match.label;
+    }
+    return metadata;
 }
 
 function workspacePathIfAvailable(uri: vscode.Uri): string | undefined {
@@ -174,16 +177,22 @@ export class FeedbackCaptureService {
             order: currentDraftCount + 1,
             createdAt: this.now().toISOString(),
             uri: editor.document.uri.toString(),
-            path: workspacePathIfAvailable(editor.document.uri),
             range: vsCodeRangeToSerializedRange(editor.selection),
             selectedText: selectedText.text,
             selectedTextTruncated: selectedText.truncated,
             feedback: input.feedbackText,
             languageId: editor.document.languageId,
             lineCount: editor.document.lineCount,
-            isDirty: editor.document.isDirty,
-            diff: serializeDiffMetadata(getEditorDiffService().findEntryForUri(editor.document.uri))
+            isDirty: editor.document.isDirty
         };
+        const itemPath = workspacePathIfAvailable(editor.document.uri);
+        if (itemPath !== undefined) {
+            item.path = itemPath;
+        }
+        const itemDiff = serializeDiffMetadata(getEditorDiffService().findEntryForUri(editor.document.uri));
+        if (itemDiff !== undefined) {
+            item.diff = itemDiff;
+        }
 
         const transition = feedbackReducer(this.session, {
             type: 'add',
@@ -226,7 +235,11 @@ export class FeedbackCaptureService {
         this.session = transition.state;
 
         if (!transition.cleared) {
-            return { cleared: false, scope, session: this.session ? this.snapshot(this.session) : undefined };
+            const result: ClearFeedbackResult = { cleared: false, scope };
+            if (this.session) {
+                result.session = this.snapshot(this.session);
+            }
+            return result;
         }
 
         this.clearMarkers();

@@ -1,13 +1,15 @@
 import * as vscode from 'vscode';
 import { AnnotationStore } from './annotation-store';
 import type {
+    AnnotationClearFilter,
     AnnotationEntry,
     AnnotationKind,
     AnnotationMode,
     CodeLensNoteEntry,
     ExplanationCommentEntry,
     GutterMarkerEntry,
-    HighlightEntry
+    HighlightEntry,
+    HoverNoteEntry
 } from './annotation-store';
 import { VsCodeAnnotationRenderer } from './annotation-renderer';
 import { AnnotationId, toAnnotationId } from './ids';
@@ -16,64 +18,64 @@ import { McpRange, mcpRangeToVsCodeRange, resolveEditorTarget, isUriInsideWorksp
 export type { AnnotationKind, AnnotationMode } from './annotation-store';
 
 export interface AnnotationRangeInput extends McpRange {
-    path?: string;
-    uri?: string;
+    path?: string | undefined;
+    uri?: string | undefined;
 }
 
 interface AnnotationTargetInput {
-    path?: string;
-    uri?: string;
+    path?: string | undefined;
+    uri?: string | undefined;
 }
 
 export interface SetHighlightsInput extends AnnotationTargetInput {
-    id?: string;
+    id?: string | undefined;
     ranges: AnnotationRangeInput[];
-    mode?: AnnotationMode;
-    kind?: AnnotationKind;
+    mode?: AnnotationMode | undefined;
+    kind?: AnnotationKind | undefined;
 }
 
 export interface SetInlineCalloutInput extends AnnotationTargetInput {
-    id?: string;
+    id?: string | undefined;
     range: AnnotationRangeInput;
     title: string;
     message: string;
-    mode?: AnnotationMode;
-    kind?: AnnotationKind;
+    mode?: AnnotationMode | undefined;
+    kind?: AnnotationKind | undefined;
 }
 
 export interface SetGutterMarkersInput extends AnnotationTargetInput {
-    id?: string;
-    ranges?: AnnotationRangeInput[];
-    lines?: number[];
-    mode?: AnnotationMode;
-    kind?: AnnotationKind;
-    label?: string;
+    id?: string | undefined;
+    ranges?: AnnotationRangeInput[] | undefined;
+    lines?: number[] | undefined;
+    mode?: AnnotationMode | undefined;
+    kind?: AnnotationKind | undefined;
+    label?: string | undefined;
 }
 
 export interface SetExplanationCommentInput extends AnnotationTargetInput {
-    id?: string;
+    id?: string | undefined;
     range: AnnotationRangeInput;
     title: string;
     body: string;
-    mode?: AnnotationMode;
-    kind?: AnnotationKind;
+    mode?: AnnotationMode | undefined;
+    kind?: AnnotationKind | undefined;
 }
 
 export interface SetHoverNoteInput extends AnnotationTargetInput {
-    id?: string;
+    id?: string | undefined;
     range: AnnotationRangeInput;
-    title?: string;
+    title?: string | undefined;
     message: string;
-    mode?: AnnotationMode;
-    kind?: AnnotationKind;
+    mode?: AnnotationMode | undefined;
+    kind?: AnnotationKind | undefined;
 }
 
 export interface SetCodeLensNoteInput extends AnnotationTargetInput {
-    id?: string;
+    id?: string | undefined;
     range: AnnotationRangeInput;
     title: string;
-    mode?: AnnotationMode;
-    kind?: AnnotationKind;
+    mode?: AnnotationMode | undefined;
+    kind?: AnnotationKind | undefined;
 }
 
 export interface AnnotationOperationResult {
@@ -84,8 +86,8 @@ export interface AnnotationOperationResult {
 }
 
 export interface ClearAnnotationsInput extends AnnotationTargetInput {
-    id?: string;
-    all?: boolean;
+    id?: string | undefined;
+    all?: boolean | undefined;
 }
 
 export interface ClearAnnotationsResult {
@@ -144,6 +146,17 @@ function operationResult(id: AnnotationId, entries: AnnotationEntry[]): Annotati
     return { id, paths: Array.from(paths), uris: Array.from(uris), rangeCount: entries.length };
 }
 
+function pickAnnotationTarget(input: AnnotationTargetInput): AnnotationTargetInput {
+    const target: AnnotationTargetInput = {};
+    if (input.path !== undefined) {
+        target.path = input.path;
+    }
+    if (input.uri !== undefined) {
+        target.uri = input.uri;
+    }
+    return target;
+}
+
 function annotationTargetForRange(input: AnnotationTargetInput, range: AnnotationRangeInput): AnnotationTargetInput {
     if (range.path && range.uri) {
         throw new Error('Provide either path or uri for an annotation range, not both.');
@@ -154,7 +167,34 @@ function annotationTargetForRange(input: AnnotationTargetInput, range: Annotatio
     if (range.path) {
         return { path: range.path };
     }
-    return { path: input.path, uri: input.uri };
+    return pickAnnotationTarget(input);
+}
+
+function createGutterMarkerEntry(
+    uri: vscode.Uri,
+    range: vscode.Range,
+    kind: AnnotationKind,
+    label: string | undefined
+): GutterMarkerEntry {
+    const entry: GutterMarkerEntry = { uri, range, kind };
+    if (label !== undefined) {
+        entry.label = label;
+    }
+    return entry;
+}
+
+function createHoverNoteEntry(
+    uri: vscode.Uri,
+    range: vscode.Range,
+    message: string,
+    kind: AnnotationKind,
+    title: string | undefined
+): HoverNoteEntry {
+    const entry: HoverNoteEntry = { uri, range, message, kind };
+    if (title !== undefined) {
+        entry.title = title;
+    }
+    return entry;
 }
 
 function escapeMarkdownText(text: string): string {
@@ -237,15 +277,15 @@ export class EditorAnnotationService {
         const newEntries: GutterMarkerEntry[] = [];
 
         for (const line of input.lines ?? []) {
-            const target = await resolveEditorTarget({ path: input.path, uri: input.uri });
+            const target = await resolveEditorTarget(pickAnnotationTarget(input));
             const range = mcpRangeToVsCodeRange({ start: { line, character: 0 }, end: { line, character: 0 } });
-            newEntries.push({ uri: target.uri, range, label: input.label, kind });
+            newEntries.push(createGutterMarkerEntry(target.uri, range, kind, input.label));
         }
 
         for (const inputRange of input.ranges ?? []) {
             const target = await resolveEditorTarget(annotationTargetForRange(input, inputRange));
             const range = mcpRangeToVsCodeRange(inputRange);
-            newEntries.push({ uri: target.uri, range, label: input.label, kind });
+            newEntries.push(createGutterMarkerEntry(target.uri, range, kind, input.label));
         }
 
         if (newEntries.length === 0) {
@@ -265,7 +305,7 @@ export class EditorAnnotationService {
         const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const range = mcpRangeToVsCodeRange(input.range);
 
-        const group = this.store.setSurfaceEntries(id, 'hoverNotes', [{ uri: target.uri, range, message: input.message, title: input.title, kind }], mode);
+        const group = this.store.setSurfaceEntries(id, 'hoverNotes', [createHoverNoteEntry(target.uri, range, input.message, kind, input.title)], mode);
         this.renderer.apply(this.store, ['hoverNotes']);
 
         return operationResult(id, group.hoverNotes);
@@ -303,14 +343,23 @@ export class EditorAnnotationService {
     }
 
     public async clearAnnotations(input: ClearAnnotationsInput = {}): Promise<ClearAnnotationsResult> {
-        const targetFilter = input.path || input.uri ? await resolveEditorTarget({ path: input.path, uri: input.uri }) : undefined;
+        const targetFilter = input.path || input.uri ? await resolveEditorTarget(pickAnnotationTarget(input)) : undefined;
         const targetId = input.id !== undefined ? toAnnotationId(input.id) : (targetFilter ? undefined : DEFAULT_ANNOTATION_ID);
-        const clearResult = this.store.clear({
-            all: input.all,
-            id: targetId,
-            targetUri: targetFilter?.uri,
-            targetPath: targetFilter ? workspacePathIfAvailable(targetFilter.uri) : undefined
-        });
+        const clearFilter: AnnotationClearFilter = {};
+        if (input.all !== undefined) {
+            clearFilter.all = input.all;
+        }
+        if (targetId !== undefined) {
+            clearFilter.id = targetId;
+        }
+        if (targetFilter) {
+            clearFilter.targetUri = targetFilter.uri;
+            const targetPath = workspacePathIfAvailable(targetFilter.uri);
+            if (targetPath !== undefined) {
+                clearFilter.targetPath = targetPath;
+            }
+        }
+        const clearResult = this.store.clear(clearFilter);
         this.disposeCommentEntries(clearResult.removedCommentEntries);
 
         this.renderer.apply(this.store);

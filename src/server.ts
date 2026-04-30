@@ -1,6 +1,7 @@
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { Server } from 'http';
 import { Request, Response } from 'express';
 import { registerFileTools, FileListingCallback } from './tools/file-tools';
@@ -61,10 +62,8 @@ export class MCPServer {
             }
         });
 
-        // Initialize transport
-        this.transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: undefined,
-        });
+        // Initialize transport (sessionIdGenerator omitted for stateless mode).
+        this.transport = new StreamableHTTPServerTransport({});
 
         // Note: setupTools() is no longer called here
         this.setupRoutes();
@@ -222,10 +221,14 @@ export class MCPServer {
             logger.info('[MCPServer.start] Starting MCP server');
             const startTime = Date.now();
 
-            // Connect transport before starting server
+            // Connect transport before starting server.
+            // Cast: StreamableHTTPServerTransport declares optional callbacks as
+            // `T | undefined` while the Transport interface declares them with `?:`.
+            // Under exactOptionalPropertyTypes the two shapes are not assignable;
+            // this is a third-party declaration mismatch in @modelcontextprotocol/sdk.
             logger.info('[MCPServer.start] Connecting transport');
             const transportConnectStart = Date.now();
-            await this.server.connect(this.transport);
+            await this.server.connect(this.transport as unknown as Transport);
             const transportConnectTime = Date.now() - transportConnectStart;
             logger.info(`[MCPServer.start] Transport connected (took ${transportConnectTime}ms)`);
 

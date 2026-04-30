@@ -246,9 +246,9 @@ function globToRegExp(pattern: string, basenameOnly: boolean): RegExp {
     let source = '';
 
     for (let index = 0; index < normalized.length; index += 1) {
-        const character = normalized[index];
+        const character = normalized.charAt(index);
         if (character === '*') {
-            if (normalized[index + 1] === '*') {
+            if (normalized.charAt(index + 1) === '*') {
                 source += '.*';
                 index += 1;
             } else {

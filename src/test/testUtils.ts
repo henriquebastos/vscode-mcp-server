@@ -1,4 +1,15 @@
+import * as assert from 'assert';
 import * as vscode from 'vscode';
+
+/**
+ * Narrows `T | undefined` to `T` for indexed-access reads in tests.
+ * Use instead of broad `!` assertions so a missing element produces a clear
+ * assertion failure rather than a downstream TypeError.
+ */
+export function assertDefined<T>(value: T | undefined, message?: string): T {
+    assert.ok(value !== undefined, message ?? 'Expected value to be defined');
+    return value;
+}
 
 // This file provides test mocks for the extension
 export class MockMCPServer {

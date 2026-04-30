@@ -3,6 +3,7 @@ import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { getEditorContext } from '../editor/context-service';
 import { disposeEditorDiffService, getEditorDiffService } from '../editor/diff-service';
+import { assertDefined } from './testUtils';
 
 suite('Editor Context Service', () => {
     teardown(() => {
@@ -61,7 +62,7 @@ suite('Editor Context Service', () => {
             { diffId: opened.diffId, entryIndex: 0, label: 'example.ts', side: 'left' },
             { diffId: opened.diffId, entryIndex: 0, label: 'example.ts', side: 'right' }
         ]);
-        assert.strictEqual(context.visibleEditors?.[0].selection.selectedText, 'oldCode');
+        assert.strictEqual(assertDefined(context.visibleEditors?.[0]).selection.selectedText, 'oldCode');
     });
 
     test('does not expose arbitrary non-file virtual editors outside the diff registry', async () => {

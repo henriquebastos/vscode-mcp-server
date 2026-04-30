@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { getSymbolHoverInfo, registerSymbolTools } from '../tools/symbol-tools';
+import { assertDefined } from './testUtils';
 
 suite('Symbol MCP Tools', () => {
     teardown(() => {
@@ -28,7 +29,7 @@ suite('Symbol MCP Tools', () => {
 
         const result = await getSymbolHoverInfo(uri, new vscode.Position(0, 0));
 
-        assert.deepStrictEqual(result.hovers[0].contents, ['42']);
+        assert.deepStrictEqual(assertDefined(result.hovers[0]).contents, ['42']);
     });
 
     test('rejects traversal before document symbol filesystem lookup', async () => {

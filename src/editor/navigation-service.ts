@@ -96,11 +96,12 @@ export async function goToDefinition(input: GoToDefinitionInput): Promise<Serial
         position
     ) ?? [];
 
-    if (definitions.length === 0) {
+    const [firstDefinition] = definitions;
+    if (!firstDefinition) {
         throw new Error(`No definition found at ${target.path}:${position.line + 1}:${position.character}.`);
     }
 
-    const destination = definitionLocation(definitions[0]);
+    const destination = definitionLocation(firstDefinition);
     const document = await vscode.workspace.openTextDocument(destination.uri);
     const editor = await vscode.window.showTextDocument(document, {
         preview: false,

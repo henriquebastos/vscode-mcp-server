@@ -66,7 +66,10 @@ async function getPreview(uri: vscode.Uri, line?: number): Promise<string | unde
                 const lines = text.split(/\r?\n/);
 
                 if (line >= 0 && line < lines.length) {
-                    return lines[line].trim();
+                    const lineText = lines[line];
+                    if (lineText !== undefined) {
+                        return lineText.trim();
+                    }
                 }
             } catch (error) {
                 logger.warn(`[getPreview] Could not read file: ${error instanceof Error ? error.message : String(error)}`);

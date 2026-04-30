@@ -3,6 +3,7 @@ import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { FeedbackCaptureService, disposeFeedbackCaptureService } from '../editor/feedback-service';
 import { disposeEditorDiffService, getEditorDiffService } from '../editor/diff-service';
+import { assertDefined } from './testUtils';
 
 suite('Editor Feedback Capture Service', () => {
     let services: FeedbackCaptureService[] = [];
@@ -93,21 +94,22 @@ suite('Editor Feedback Capture Service', () => {
         assert.strictEqual(session.id, 'feedback-session-1');
         assert.strictEqual(session.status, 'draft');
         assert.strictEqual(session.count, 1);
-        assert.strictEqual(session.items[0].id, 'feedback-item-1');
-        assert.strictEqual(session.items[0].order, 1);
-        assert.strictEqual(session.items[0].createdAt, '2026-04-29T21:30:00.000Z');
-        assert.strictEqual(session.items[0].uri, documentUri.toString());
-        assert.strictEqual(session.items[0].path, 'src/example.ts');
-        assert.deepStrictEqual(session.items[0].range, {
+        const firstItem = assertDefined(session.items[0]);
+        assert.strictEqual(firstItem.id, 'feedback-item-1');
+        assert.strictEqual(firstItem.order, 1);
+        assert.strictEqual(firstItem.createdAt, '2026-04-29T21:30:00.000Z');
+        assert.strictEqual(firstItem.uri, documentUri.toString());
+        assert.strictEqual(firstItem.path, 'src/example.ts');
+        assert.deepStrictEqual(firstItem.range, {
             start: { line: 2, character: 2 },
             end: { line: 2, character: 8 }
         });
-        assert.strictEqual(session.items[0].selectedText, 'sample');
-        assert.strictEqual(session.items[0].selectedTextTruncated, false);
-        assert.strictEqual(session.items[0].feedback, 'Please rename this variable.');
-        assert.strictEqual(session.items[0].languageId, 'typescript');
-        assert.strictEqual(session.items[0].lineCount, 12);
-        assert.strictEqual(session.items[0].isDirty, true);
+        assert.strictEqual(firstItem.selectedText, 'sample');
+        assert.strictEqual(firstItem.selectedTextTruncated, false);
+        assert.strictEqual(firstItem.feedback, 'Please rename this variable.');
+        assert.strictEqual(firstItem.languageId, 'typescript');
+        assert.strictEqual(firstItem.lineCount, 12);
+        assert.strictEqual(firstItem.isDirty, true);
 
         const markerCall = setDecorationsSpy.getCalls().find(call => call.args[0] === decorationType && call.args[1].length === 1);
         assert.ok(markerCall, 'feedback marker decoration was not applied');
@@ -149,7 +151,7 @@ suite('Editor Feedback Capture Service', () => {
 
         assert.strictEqual(ready.status, 'ready');
         assert.strictEqual(ready.count, 1);
-        assert.strictEqual(ready.items[0].feedback, 'Please rename this variable.');
+        assert.strictEqual(assertDefined(ready.items[0]).feedback, 'Please rename this variable.');
         const markerCall = setDecorationsSpy.getCalls().filter(call => call.args[0] === decorationType && call.args[1].length === 1).at(-1);
         assert.ok(markerCall, 'ready feedback marker should remain visible');
     });
@@ -178,8 +180,9 @@ suite('Editor Feedback Capture Service', () => {
             maxSelectedTextCharacters: 3
         });
 
-        assert.strictEqual(session.items[0].selectedText, 'abc');
-        assert.strictEqual(session.items[0].selectedTextTruncated, true);
+        const truncatedItem = assertDefined(session.items[0]);
+        assert.strictEqual(truncatedItem.selectedText, 'abc');
+        assert.strictEqual(truncatedItem.selectedTextTruncated, true);
     });
 
     test('dispose clears markers and releases VS Code disposables', async () => {
@@ -277,14 +280,15 @@ suite('Editor Feedback Capture Service', () => {
 
         const session = await service.addFeedback({ feedbackText: 'Check the new behavior.' });
 
-        assert.strictEqual(session.items[0].path, undefined);
-        assert.deepStrictEqual(session.items[0].diff, {
+        const rightDiffItem = assertDefined(session.items[0]);
+        assert.strictEqual(rightDiffItem.path, undefined);
+        assert.deepStrictEqual(rightDiffItem.diff, {
             diffId: opened.diffId,
             entryIndex: 0,
             label: 'example.ts',
             side: 'right'
         });
-        assert.strictEqual(session.items[0].selectedText, 'newCode');
+        assert.strictEqual(rightDiffItem.selectedText, 'newCode');
         assert.ok(setDecorationsSpy.called, 'diff feedback marker was not applied');
     });
 
@@ -318,12 +322,13 @@ suite('Editor Feedback Capture Service', () => {
 
         const session = await service.addFeedback({ feedbackText: 'This old behavior matters.' });
 
-        assert.deepStrictEqual(session.items[0].diff, {
+        const leftDiffItem = assertDefined(session.items[0]);
+        assert.deepStrictEqual(leftDiffItem.diff, {
             diffId: opened.diffId,
             entryIndex: 0,
             label: 'example.ts',
             side: 'left'
         });
-        assert.strictEqual(session.items[0].selectedText, 'oldCode');
+        assert.strictEqual(leftDiffItem.selectedText, 'oldCode');
     });
 });

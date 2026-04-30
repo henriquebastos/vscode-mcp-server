@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { disposeEditorAnnotationService, EditorAnnotationService } from '../editor/annotation-service';
+import { assertDefined } from './testUtils';
 
 suite('Editor Annotation Service', () => {
     let onDidChangeVisibleTextEditorsStub: sinon.SinonStub;
@@ -196,9 +197,10 @@ suite('Editor Annotation Service', () => {
         assert.ok(hoverCall, 'hover note decoration was not applied');
         const options = hoverCall.args[1] as vscode.DecorationOptions[];
         assert.strictEqual(options.length, 1);
-        assert.strictEqual(options[0].range.start.line, 0);
-        assert.strictEqual(options[0].range.start.character, 2);
-        const hover = options[0].hoverMessage as vscode.MarkdownString;
+        const firstHoverOption = assertDefined(options[0]);
+        assert.strictEqual(firstHoverOption.range.start.line, 0);
+        assert.strictEqual(firstHoverOption.range.start.character, 2);
+        const hover = firstHoverOption.hoverMessage as vscode.MarkdownString;
         assert.ok(hover instanceof vscode.MarkdownString);
         assert.strictEqual(hover.isTrusted, false);
         assert.ok(hover.value.includes('Word note'));
@@ -241,10 +243,11 @@ suite('Editor Annotation Service', () => {
         tokenSource.dispose();
 
         assert.strictEqual(codeLenses?.length, 1);
-        assert.strictEqual(codeLenses[0].range.start.line, 1);
-        assert.strictEqual(codeLenses[0].range.start.character, 4);
-        assert.strictEqual(codeLenses[0].command?.title, 'Step 1: schema');
-        assert.strictEqual(codeLenses[0].command?.command, 'vscode-mcp-server.codelensNote.noop');
+        const firstCodeLens = assertDefined(codeLenses?.[0]);
+        assert.strictEqual(firstCodeLens.range.start.line, 1);
+        assert.strictEqual(firstCodeLens.range.start.character, 4);
+        assert.strictEqual(firstCodeLens.command?.title, 'Step 1: schema');
+        assert.strictEqual(firstCodeLens.command?.command, 'vscode-mcp-server.codelensNote.noop');
         assert.strictEqual(activeEditor.selection, originalSelection);
     });
 
@@ -287,7 +290,7 @@ suite('Editor Annotation Service', () => {
         tokenSource.dispose();
 
         assert.strictEqual(registerCommandStub.calledWith('vscode-mcp-server.codelensNote.noop'), true);
-        assert.strictEqual(codeLenses?.[0].command?.command, 'vscode-mcp-server.codelensNote.noop');
+        assert.strictEqual(assertDefined(codeLenses?.[0]).command?.command, 'vscode-mcp-server.codelensNote.noop');
         assert.strictEqual(noOpHandler?.(), undefined);
 
         service.dispose();
@@ -335,7 +338,7 @@ suite('Editor Annotation Service', () => {
         const tokenSource = new vscode.CancellationTokenSource();
         const additiveLenses = await Promise.resolve(codeLensProvider.provideCodeLenses?.({ uri: documentUri } as vscode.TextDocument, tokenSource.token));
         assert.deepStrictEqual(additiveLenses?.map(lens => lens.command?.title), ['Step 1: schema', 'Question to revisit']);
-        assert.strictEqual(additiveLenses?.[1].command?.tooltip, 'Guided explanation question note');
+        assert.strictEqual(assertDefined(additiveLenses?.[1]).command?.tooltip, 'Guided explanation question note');
 
         const replaced = await service.setCodeLensNote({
             id: 'walkthrough',
@@ -347,8 +350,9 @@ suite('Editor Annotation Service', () => {
 
         assert.strictEqual(replaced.rangeCount, 1);
         assert.strictEqual(replacementLenses?.length, 1);
-        assert.strictEqual(replacementLenses?.[0].command?.title, 'Replacement step');
-        assert.strictEqual(replacementLenses?.[0].range.start.line, 2);
+        const firstReplacementLens = assertDefined(replacementLenses?.[0]);
+        assert.strictEqual(firstReplacementLens.command?.title, 'Replacement step');
+        assert.strictEqual(firstReplacementLens.range.start.line, 2);
         assert.strictEqual(activeEditor.selection, originalSelection);
     });
 
@@ -454,8 +458,9 @@ suite('Editor Annotation Service', () => {
 
         assert.deepStrictEqual(firstLenses?.map(lens => lens.command?.title), ['Caller']);
         assert.deepStrictEqual(secondLenses?.map(lens => lens.command?.title), ['Definition']);
-        assert.strictEqual(secondLenses?.[0].range.start.line, 1);
-        assert.strictEqual(secondLenses?.[0].range.start.character, 1);
+        const firstSecondLens = assertDefined(secondLenses?.[0]);
+        assert.strictEqual(firstSecondLens.range.start.line, 1);
+        assert.strictEqual(firstSecondLens.range.start.character, 1);
     });
 
     test('clears CodeLens notes by id while preserving other ids and refreshing the provider', async () => {
@@ -1010,12 +1015,13 @@ suite('Editor Annotation Service', () => {
         assert.strictEqual(createCommentThreadStub.firstCall.args[0].toString(), documentUri.toString());
         assert.strictEqual(createCommentThreadStub.firstCall.args[1].start.line, 1);
         const comments = createCommentThreadStub.firstCall.args[2] as vscode.Comment[];
-        assert.strictEqual(comments[0].mode, vscode.CommentMode.Preview);
-        assert.strictEqual(comments[0].author.name, 'Guided Explanation');
-        assert.ok(comments[0].body instanceof vscode.MarkdownString);
-        assert.strictEqual((comments[0].body as vscode.MarkdownString).isTrusted, false);
-        assert.ok((comments[0].body as vscode.MarkdownString).value.includes('Why branch here?'));
-        assert.ok((comments[0].body as vscode.MarkdownString).value.includes('**This** explains the branch.'));
+        const firstComment = assertDefined(comments[0]);
+        assert.strictEqual(firstComment.mode, vscode.CommentMode.Preview);
+        assert.strictEqual(firstComment.author.name, 'Guided Explanation');
+        assert.ok(firstComment.body instanceof vscode.MarkdownString);
+        assert.strictEqual((firstComment.body as vscode.MarkdownString).isTrusted, false);
+        assert.ok((firstComment.body as vscode.MarkdownString).value.includes('Why branch here?'));
+        assert.ok((firstComment.body as vscode.MarkdownString).value.includes('**This** explains the branch.'));
         assert.strictEqual(thread.canReply, false);
         assert.strictEqual(thread.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
         assert.strictEqual(thread.label, 'Guided Explanation: Why branch here?');
@@ -1122,7 +1128,7 @@ suite('Editor Annotation Service', () => {
         });
 
         const comments = createCommentThreadStub.firstCall.args[2] as vscode.Comment[];
-        const markdown = comments[0].body as vscode.MarkdownString;
+        const markdown = assertDefined(comments[0]).body as vscode.MarkdownString;
         assert.ok(markdown.value.includes('`code`'), 'safe markdown was not preserved');
         assert.strictEqual(markdown.value.includes('!['), false, 'image markdown was not neutralized');
         assert.strictEqual(markdown.value.includes('file://'), false, 'unsafe link scheme was not stripped');
@@ -1199,8 +1205,9 @@ suite('Editor Annotation Service', () => {
         assert.ok(markerDecorationCall, 'warning gutter marker decoration was not applied');
         const markerOptions = markerDecorationCall.args[1] as vscode.DecorationOptions[];
         assert.strictEqual(markerOptions.length, 2);
-        assert.strictEqual(markerOptions[0].range.start.line, 1);
-        assert.ok(markerOptions[0].hoverMessage, 'gutter marker omitted label hover message');
+        const firstMarkerOption = assertDefined(markerOptions[0]);
+        assert.strictEqual(firstMarkerOption.range.start.line, 1);
+        assert.ok(firstMarkerOption.hoverMessage, 'gutter marker omitted label hover message');
         assert.strictEqual(activeEditor.selection, originalSelection);
     });
 
@@ -1319,9 +1326,10 @@ suite('Editor Annotation Service', () => {
         const calloutOptions = setDecorationsSpy.lastCall.args[1] as vscode.DecorationOptions[];
         assert.strictEqual(setDecorationsSpy.lastCall.args[0], calloutDecorationType);
         assert.strictEqual(calloutOptions.length, 1);
-        assert.strictEqual(calloutOptions[0].range.start.line, 1);
-        assert.strictEqual(calloutOptions[0].range.start.character, 24);
-        assert.strictEqual(calloutOptions[0].renderOptions?.after?.contentText, '  Factory: Builds the server instance.');
+        const firstCalloutOption = assertDefined(calloutOptions[0]);
+        assert.strictEqual(firstCalloutOption.range.start.line, 1);
+        assert.strictEqual(firstCalloutOption.range.start.character, 24);
+        assert.strictEqual(firstCalloutOption.renderOptions?.after?.contentText, '  Factory: Builds the server instance.');
         assert.strictEqual(activeEditor.selection, originalSelection);
     });
 

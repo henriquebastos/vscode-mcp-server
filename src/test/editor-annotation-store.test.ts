@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { AnnotationStore } from '../editor/annotation-store';
 import { toAnnotationId } from '../editor/ids';
+import { assertDefined } from './testUtils';
 
 suite('Editor Annotation Store', () => {
     const workspaceRoot = '/workspace/';
@@ -46,7 +47,7 @@ suite('Editor Annotation Store', () => {
         const groupAfterReplace = store.getGroup(id);
 
         assert.strictEqual(groupAfterReplace?.highlights.length, 1);
-        assert.strictEqual(groupAfterReplace?.highlights[0].range.start.line, 2);
+        assert.strictEqual(assertDefined(groupAfterReplace?.highlights[0]).range.start.line, 2);
         assert.deepStrictEqual(groupAfterReplace?.callouts, [callout]);
     });
 

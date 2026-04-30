@@ -11,6 +11,7 @@ import { registerDiagnosticsTools } from './tools/diagnostics-tools';
 import { registerSymbolTools } from './tools/symbol-tools';
 import { disposeEditorAnnotationService } from './editor/annotation-service';
 import { disposeEditorDiffService } from './editor/diff-service';
+import { disposeFeedbackCaptureService } from './editor/feedback-service';
 import { registerEditorTools } from './tools/editor-tools';
 import { logger } from './utils/logger';
 
@@ -130,6 +131,7 @@ export class MCPServer {
         } else {
             disposeEditorAnnotationService();
             disposeEditorDiffService();
+            disposeFeedbackCaptureService();
             logger.info('MCP editor tools disabled by configuration');
         }
     }
@@ -318,6 +320,7 @@ export class MCPServer {
         } finally {
             disposeEditorAnnotationService();
             disposeEditorDiffService();
+            disposeFeedbackCaptureService();
         }
     }
 }

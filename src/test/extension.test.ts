@@ -18,6 +18,7 @@ suite('Extension Test Suite', () => {
     let createStatusBarItemStub: sinon.SinonStub;
     let registerCommandStub: sinon.SinonStub;
     let onDidChangeConfigurationStub: sinon.SinonStub;
+    let disposeFeedbackCaptureService: sinon.SinonSpy;
 
     setup(() => {
         // Create mock MCPServer
@@ -30,10 +31,20 @@ suite('Extension Test Suite', () => {
         
         // Mock constructor for MCPServer
         MockServerConstructor = sinon.stub().returns(mockMCPServer);
+        disposeFeedbackCaptureService = sinon.spy();
         
         // Load extension with mocked dependencies
         extension = proxyquire('../extension', {
-            './server': { MCPServer: MockServerConstructor }
+            './server': { MCPServer: MockServerConstructor },
+            './editor/feedback-service': { disposeFeedbackCaptureService },
+            './utils/logger': {
+                logger: {
+                    info: sinon.spy(),
+                    warn: sinon.spy(),
+                    error: sinon.spy(),
+                    dispose: sinon.spy()
+                }
+            }
         });
         
         // Create mock status bar item
@@ -132,6 +143,15 @@ suite('Extension Test Suite', () => {
         assert.strictEqual(showServerInfoCall !== undefined, true, 'Server info command not registered');
     });
 
+    test('Guided feedback commands should be registered', async () => {
+        await extension.activate(context);
+
+        const registeredCommandIds = registerCommandStub.getCalls().map(call => call.args[0]);
+        assert.ok(registeredCommandIds.includes('vscode-mcp-server.feedback.add'), 'Add Feedback command not registered');
+        assert.ok(registeredCommandIds.includes('vscode-mcp-server.feedback.finish'), 'Finish Feedback command not registered');
+        assert.ok(registeredCommandIds.includes('vscode-mcp-server.feedback.cancel'), 'Cancel Feedback command not registered');
+    });
+
     test('Configuration change listener should be registered', async () => {
         // Activate the extension  
         await extension.activate(context);
@@ -154,5 +174,15 @@ suite('Extension Test Suite', () => {
         
         // Check that server was stopped
         assert.strictEqual(mockMCPServer.stop.called, true, 'Server not stopped during deactivation');
+        assert.strictEqual(disposeFeedbackCaptureService.called, true, 'Feedback service not disposed during deactivation');
+    });
+
+    test('Deactivate should dispose feedback state even when server is disabled', async () => {
+        workspaceConfig.get.withArgs('defaultEnabled').returns(false);
+
+        await extension.activate(context);
+        await extension.deactivate();
+
+        assert.strictEqual(disposeFeedbackCaptureService.called, true, 'Feedback service not disposed without a running server');
     });
 });

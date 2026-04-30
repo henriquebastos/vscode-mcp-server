@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { AnnotationKind, AnnotationMode, AnnotationRangeInput, getEditorAnnotationService } from '../editor/annotation-service';
 import { getEditorContext } from '../editor/context-service';
 import { DiffEntryInput, getEditorDiffService } from '../editor/diff-service';
+import { updateFeedbackContext } from '../editor/feedback-commands';
+import { getFeedbackCaptureService } from '../editor/feedback-service';
 import { McpRange } from '../editor/location-utils';
 import { goToDefinition, revealRange } from '../editor/navigation-service';
 
@@ -98,6 +100,10 @@ interface ClearAnnotationsToolInput {
     all?: boolean;
 }
 
+interface ClearFeedbackToolInput {
+    scope?: 'draft' | 'ready' | 'drained' | 'cancelled' | 'all';
+}
+
 interface GoToDefinitionToolInput {
     path?: string;
     position?: { line: number; character?: number };
@@ -127,6 +133,78 @@ const diffEntrySchema = z.object({
 });
 
 export function registerEditorTools(server: McpServer): void {
+    server.tool(
+        'get_feedback_code',
+        `Returns the current guided editor feedback session without mutating it.
+
+        WHEN TO USE: The user says they finished leaving feedback in VS Code, or you need to
+        preview captured feedback before deciding whether to drain or clear it. This tool does
+        not clear draft or ready feedback.`,
+        {},
+        async (): Promise<CallToolResult> => {
+            const session = getFeedbackCaptureService().getFeedback();
+            const result = session ?? { status: 'empty', count: 0, items: [] };
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }
+                ]
+            };
+        }
+    );
+
+    server.tool(
+        'drain_feedback_code',
+        `Returns the ready guided editor feedback session and marks it consumed.
+
+        WHEN TO USE: The user has finished a VS Code feedback batch and you are ready to process
+        it exactly once. The returned batch remains structured in the response, but a second drain
+        will fail until the user captures and finishes a new batch.`,
+        {},
+        async (): Promise<CallToolResult> => {
+            const feedbackService = getFeedbackCaptureService();
+            const session = await feedbackService.drainFeedback();
+            await updateFeedbackContext(feedbackService.getFeedback());
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify(session, null, 2)
+                    }
+                ]
+            };
+        }
+    );
+
+    server.tool(
+        'clear_feedback_code',
+        `Clears guided editor feedback state and temporary markers.
+
+        WHEN TO USE: Remove a draft, ready, drained, or cancelled feedback session after it has
+        been processed or intentionally discarded. The scope argument makes it explicit which
+        lifecycle state may be cleared; scope=all clears any current feedback session.`,
+        {
+            scope: z.enum(['draft', 'ready', 'drained', 'cancelled', 'all']).optional().default('all').describe('Which feedback session state to clear. Defaults to all.')
+        },
+        async ({ scope = 'all' }: ClearFeedbackToolInput): Promise<CallToolResult> => {
+            const result = await getFeedbackCaptureService().clearFeedback({ scope });
+            await updateFeedbackContext(result.session);
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }
+                ]
+            };
+        }
+    );
+
     server.tool(
         'open_diff_code',
         `Opens a native VS Code changes editor for URI-first guided diff review.

@@ -99,8 +99,35 @@ The VS Code MCP Server extension implements an MCP-compliant server that allows 
 - **Execute shell commands** in the integrated terminal with shell integration
 - **Toggle the server** on and off via a status bar item
 - **Open native VS Code diffs** from URI sources or explicit file-pair entries, then annotate the returned document URIs
+- **Capture guided editor feedback** from selected source or diff ranges using editor title toolbar actions, then let an agent retrieve the structured batch
 
 This extension enables AI assistants and other tools to interact with your VS Code workspace through the standardized MCP protocol.
+
+## Guided Editor Feedback Capture
+
+When reviewing code in a normal editor or native VS Code diff, select a range and run **Add Feedback** from the editor title toolbar or command palette. Type a note, submit it, and repeat across files or diff panes. Use **Finish Feedback** when the batch is ready for the agent, or **Cancel Feedback** to clear the draft markers.
+
+The first pass does not install global keyboard shortcuts. If you want shortcuts, add keybindings like these in VS Code's Keyboard Shortcuts JSON:
+
+```jsonc
+[
+  {
+    "key": "cmd+alt+f",
+    "command": "vscode-mcp-server.feedback.add",
+    "when": "editorTextFocus"
+  },
+  {
+    "key": "cmd+alt+enter",
+    "command": "vscode-mcp-server.feedback.finish",
+    "when": "vscodeMcpServer.feedbackActive"
+  },
+  {
+    "key": "cmd+alt+backspace",
+    "command": "vscode-mcp-server.feedback.cancel",
+    "when": "vscodeMcpServer.feedbackActive"
+  }
+]
+```
 
 ## How It Works
 

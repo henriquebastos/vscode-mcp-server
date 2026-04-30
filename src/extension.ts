@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { MCPServer, ToolConfiguration } from './server';
+import { registerFeedbackCommands } from './editor/feedback-commands';
+import { disposeFeedbackCaptureService } from './editor/feedback-service';
 import { listWorkspaceFiles } from './tools/file-tools';
 import { logger } from './utils/logger';
 
@@ -252,11 +254,14 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         });
 
+        const feedbackCommands = registerFeedbackCommands();
+
         // Add all disposables to the context subscriptions
         context.subscriptions.push(
             statusBarItem,
             toggleServerCommand,
             showServerInfoCommand,
+            ...feedbackCommands,
             configChangeListener,
             { dispose: async () => mcpServer && await mcpServer.stop() }
         );
@@ -279,6 +284,7 @@ export async function deactivate() {
     }
 
     if (!mcpServer) {
+        disposeFeedbackCaptureService();
         return;
     }
     
@@ -291,6 +297,7 @@ export async function deactivate() {
         throw error; // Re-throw to ensure VS Code knows about the failure
     } finally {
         mcpServer = undefined;
+        disposeFeedbackCaptureService();
         // Dispose the logger
         logger.dispose();
     }

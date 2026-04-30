@@ -3,6 +3,8 @@ import * as sinon from 'sinon';
 import * as vscode from 'vscode';
 import { disposeEditorAnnotationService } from '../editor/annotation-service';
 import { disposeEditorDiffService } from '../editor/diff-service';
+import { FEEDBACK_ITEM_COUNT_CONTEXT, FEEDBACK_READY_CONTEXT } from '../editor/feedback-commands';
+import { disposeFeedbackCaptureService, getFeedbackCaptureService } from '../editor/feedback-service';
 import { registerEditorTools } from '../tools/editor-tools';
 
 suite('Editor MCP Tools', () => {
@@ -13,6 +15,7 @@ suite('Editor MCP Tools', () => {
     teardown(() => {
         disposeEditorAnnotationService();
         disposeEditorDiffService();
+        disposeFeedbackCaptureService();
         sinon.restore();
     });
 
@@ -344,6 +347,159 @@ suite('Editor MCP Tools', () => {
         assert.strictEqual(payload.id, 'current');
         assert.deepStrictEqual(payload.paths, ['src/example.ts']);
         assert.strictEqual(payload.rangeCount, 2);
+    });
+
+    test('registers get_feedback_code and returns ready feedback without clearing it', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const selection = new vscode.Selection(0, 0, 0, 6);
+        const activeEditor = {
+            document: {
+                uri: documentUri,
+                languageId: 'typescript',
+                lineCount: 1,
+                isDirty: false,
+                getText: sinon.stub().withArgs(selection).returns('sample')
+            },
+            selection,
+            selections: [selection],
+            visibleRanges: [new vscode.Range(0, 0, 0, 6)],
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+        await getFeedbackCaptureService().addFeedback({ feedbackText: 'Please check this.' });
+        await getFeedbackCaptureService().finishFeedback();
+
+        const registeredTools = createEditorToolServer();
+        const tool = registeredTools.find(registered => registered.name === 'get_feedback_code');
+        assert.ok(tool, 'get_feedback_code was not registered');
+
+        const firstResult = await tool.handler({});
+        const secondResult = await tool.handler({});
+        const firstPayload = JSON.parse(firstResult.content[0].text);
+        const secondPayload = JSON.parse(secondResult.content[0].text);
+
+        assert.strictEqual(firstPayload.status, 'ready');
+        assert.strictEqual(firstPayload.count, 1);
+        assert.strictEqual(firstPayload.items[0].feedback, 'Please check this.');
+        assert.deepStrictEqual(secondPayload, firstPayload);
+    });
+
+    test('registers drain_feedback_code and prevents duplicate ready-session processing', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const selection = new vscode.Selection(0, 0, 0, 6);
+        const activeEditor = {
+            document: {
+                uri: documentUri,
+                languageId: 'typescript',
+                lineCount: 1,
+                isDirty: false,
+                getText: sinon.stub().withArgs(selection).returns('sample')
+            },
+            selection,
+            selections: [selection],
+            visibleRanges: [new vscode.Range(0, 0, 0, 6)],
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const executeCommandStub = sinon.stub(vscode.commands, 'executeCommand').resolves();
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+        await getFeedbackCaptureService().addFeedback({ feedbackText: 'Please check this.' });
+        await getFeedbackCaptureService().finishFeedback();
+
+        const registeredTools = createEditorToolServer();
+        const drain = registeredTools.find(registered => registered.name === 'drain_feedback_code');
+        const get = registeredTools.find(registered => registered.name === 'get_feedback_code');
+        assert.ok(drain, 'drain_feedback_code was not registered');
+        assert.ok(get, 'get_feedback_code was not registered');
+
+        const result = await drain.handler({});
+        const payload = JSON.parse(result.content[0].text);
+        const getAfterDrain = JSON.parse((await get.handler({})).content[0].text);
+
+        assert.strictEqual(payload.status, 'ready');
+        assert.strictEqual(payload.count, 1);
+        assert.strictEqual(payload.items[0].feedback, 'Please check this.');
+        assert.strictEqual(getAfterDrain.status, 'drained');
+        const markerClearCall = (activeEditor.setDecorations as sinon.SinonSpy).getCalls()
+            .filter(call => call.args[0] === decorationType)
+            .at(-1);
+        assert.ok(markerClearCall, 'drain should clear feedback markers');
+        assert.strictEqual(markerClearCall.args[1].length, 0);
+        const feedbackReadyCalls = executeCommandStub.getCalls()
+            .filter(call => call.args[0] === 'setContext' && call.args[1] === FEEDBACK_READY_CONTEXT)
+            .map(call => call.args[2]);
+        const feedbackCountCalls = executeCommandStub.getCalls()
+            .filter(call => call.args[0] === 'setContext' && call.args[1] === FEEDBACK_ITEM_COUNT_CONTEXT)
+            .map(call => call.args[2]);
+        assert.strictEqual(feedbackReadyCalls.at(-1), false, 'drain should clear the ready context key');
+        assert.strictEqual(feedbackCountCalls.at(-1), 0, 'drain should clear the feedback count context key');
+        await assert.rejects(
+            () => drain.handler({}),
+            /No ready feedback session/
+        );
+    });
+
+    test('registers clear_feedback_code and clears draft feedback state', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const documentUri = vscode.Uri.file('/workspace/src/example.ts');
+        const selection = new vscode.Selection(0, 0, 0, 6);
+        const activeEditor = {
+            document: {
+                uri: documentUri,
+                languageId: 'typescript',
+                lineCount: 1,
+                isDirty: false,
+                getText: sinon.stub().withArgs(selection).returns('sample')
+            },
+            selection,
+            selections: [selection],
+            visibleRanges: [new vscode.Range(0, 0, 0, 6)],
+            setDecorations: sinon.spy()
+        } as unknown as vscode.TextEditor;
+        const decorationType = { dispose: sinon.spy() } as unknown as vscode.TextEditorDecorationType;
+        const executeCommandStub = sinon.stub(vscode.commands, 'executeCommand').resolves();
+
+        sinon.stub(vscode.window, 'createTextEditorDecorationType').returns(decorationType);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+        sinon.stub(vscode.window, 'activeTextEditor').value(activeEditor);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([activeEditor]);
+        await getFeedbackCaptureService().addFeedback({ feedbackText: 'Please check this.' });
+
+        const registeredTools = createEditorToolServer();
+        const clear = registeredTools.find(registered => registered.name === 'clear_feedback_code');
+        const get = registeredTools.find(registered => registered.name === 'get_feedback_code');
+        assert.ok(clear, 'clear_feedback_code was not registered');
+        assert.ok(get, 'get_feedback_code was not registered');
+
+        const clearResult = await clear.handler({ scope: 'draft' });
+        const getResult = await get.handler({});
+        const clearPayload = JSON.parse(clearResult.content[0].text);
+        const getPayload = JSON.parse(getResult.content[0].text);
+
+        assert.strictEqual(clearPayload.cleared, true);
+        assert.strictEqual(clearPayload.session.status, 'cancelled');
+        assert.strictEqual(clearPayload.session.count, 0);
+        assert.strictEqual(getPayload.status, 'cancelled');
+        assert.strictEqual(getPayload.count, 0);
+        const feedbackReadyCalls = executeCommandStub.getCalls()
+            .filter(call => call.args[0] === 'setContext' && call.args[1] === FEEDBACK_READY_CONTEXT)
+            .map(call => call.args[2]);
+        const feedbackCountCalls = executeCommandStub.getCalls()
+            .filter(call => call.args[0] === 'setContext' && call.args[1] === FEEDBACK_ITEM_COUNT_CONTEXT)
+            .map(call => call.args[2]);
+        assert.strictEqual(feedbackReadyCalls.at(-1), false, 'clear should clear the ready context key');
+        assert.strictEqual(feedbackCountCalls.at(-1), 0, 'clear should clear the feedback count context key');
     });
 
     test('registers reveal_range_code and returns revealed location', async () => {

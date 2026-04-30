@@ -65,6 +65,31 @@ export async function createWorkspaceFile(
  * @param originalCode The original code for validation
  * @returns Promise that resolves when the edit operation completes
  */
+function assertLineRange(document: vscode.TextDocument, startLine: number, endLine: number): void {
+    if (startLine < 0 || startLine >= document.lineCount) {
+        throw new Error(`Start line ${startLine + 1} is out of range (1-${document.lineCount})`);
+    }
+    if (endLine < startLine || endLine >= document.lineCount) {
+        throw new Error(`End line ${endLine + 1} is out of range (${startLine + 1}-${document.lineCount})`);
+    }
+}
+
+function readDocumentLines(document: vscode.TextDocument, startLine: number, endLine: number): string {
+    const lines: string[] = [];
+    for (let i = startLine; i <= endLine; i++) {
+        lines.push(document.lineAt(i).text);
+    }
+    return lines.join('\n');
+}
+
+async function getOrShowEditor(document: vscode.TextDocument, fileUri: vscode.Uri): Promise<vscode.TextEditor> {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.document.uri.toString() === fileUri.toString()) {
+        return editor;
+    }
+    return vscode.window.showTextDocument(document);
+}
+
 export async function replaceWorkspaceFileLines(
     workspacePath: string,
     startLine: number,
@@ -73,59 +98,34 @@ export async function replaceWorkspaceFileLines(
     originalCode: string
 ): Promise<void> {
     console.log(`[replaceWorkspaceFileLines] Starting with path: ${workspacePath}, lines: ${startLine}-${endLine}`);
-    
+
     const fileUri = workspacePathToUri(assertWorkspacePath(workspacePath));
     console.log(`[replaceWorkspaceFileLines] File URI: ${fileUri.fsPath}`);
 
     try {
-        // Open the document (or get it if already open)
         const document = await vscode.workspace.openTextDocument(fileUri);
-        
-        // Validate line numbers
-        if (startLine < 0 || startLine >= document.lineCount) {
-            throw new Error(`Start line ${startLine + 1} is out of range (1-${document.lineCount})`);
-        }
-        if (endLine < startLine || endLine >= document.lineCount) {
-            throw new Error(`End line ${endLine + 1} is out of range (${startLine + 1}-${document.lineCount})`);
-        }
-        
-        // Get the current content of the lines
-        const currentLines = [];
-        for (let i = startLine; i <= endLine; i++) {
-            currentLines.push(document.lineAt(i).text);
-        }
-        const currentContent = currentLines.join('\n');
-        
-        // Compare with the provided original code
+        assertLineRange(document, startLine, endLine);
+
+        const currentContent = readDocumentLines(document, startLine, endLine);
         if (currentContent !== originalCode) {
             throw new Error(`Original code validation failed. The current content does not match the provided original code.`);
         }
-        
-        // Create a range for the lines to replace
-        const startPos = new vscode.Position(startLine, 0);
-        const endPos = new vscode.Position(endLine, document.lineAt(endLine).text.length);
-        const range = new vscode.Range(startPos, endPos);
-        
-        // Get the active text editor or show the document
-        let editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.uri.toString() !== fileUri.toString()) {
-            editor = await vscode.window.showTextDocument(document);
-        }
-        
-        // Apply the edit
+
+        const range = new vscode.Range(
+            new vscode.Position(startLine, 0),
+            new vscode.Position(endLine, document.lineAt(endLine).text.length),
+        );
+        const editor = await getOrShowEditor(document, fileUri);
         const success = await editor.edit((editBuilder) => {
             editBuilder.replace(range, content);
         });
-        
-        if (success) {
-            console.log(`[replaceWorkspaceFileLines] Lines replaced successfully`);
-            
-            // Save the document to persist changes
-            await document.save();
-            console.log(`[replaceWorkspaceFileLines] Document saved`);
-        } else {
+
+        if (!success) {
             throw new Error(`Failed to replace lines in file: ${fileUri.fsPath}`);
         }
+        console.log(`[replaceWorkspaceFileLines] Lines replaced successfully`);
+        await document.save();
+        console.log(`[replaceWorkspaceFileLines] Document saved`);
     } catch (error) {
         console.error('[replaceWorkspaceFileLines] Error:', error);
         throw error;

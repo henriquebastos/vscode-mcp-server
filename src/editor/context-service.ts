@@ -3,6 +3,7 @@ import type { DiffEntryMatch } from './diff-service';
 import { getEditorDiffService } from './diff-service';
 import type { SerializedRange } from './location-utils';
 import { isUriInsideWorkspace, uriToWorkspacePath, vsCodeRangeToSerializedRange } from './location-utils';
+import { truncateText } from '../utils/text-utils';
 
 const DEFAULT_MAX_SELECTED_TEXT_CHARACTERS = 4000;
 
@@ -40,14 +41,6 @@ export interface SerializedEditorContext {
 export interface EditorContext {
     activeEditor?: SerializedEditorContext;
     visibleEditors?: SerializedEditorContext[];
-}
-
-function truncateText(text: string, maxCharacters: number): { text: string; truncated: boolean } {
-    if (text.length <= maxCharacters) {
-        return { text, truncated: false };
-    }
-
-    return { text: text.slice(0, maxCharacters), truncated: true };
 }
 
 function serializeSelection(

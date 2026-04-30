@@ -12,16 +12,9 @@ import type {
 
 export { normalizeDiffRequest } from './diff-normalizer';
 export type {
-    DiffEntryInput,
     DiffEntryMatch,
-    DiffFileSystem,
     DiffRequest,
     EditorDiffServiceOptions,
-    GitApi,
-    GitChange,
-    GitRepository,
-    NonEmptyArray,
-    NormalizedDiffEntry,
     OpenDiffInput,
     OpenDiffResult,
     StoredDiff
@@ -51,14 +44,14 @@ export class EditorDiffService {
         return this.registry.get(diffId);
     }
 
-    public listDiffs(): StoredDiff[] {
-        return this.registry.list();
-    }
-
+    // Used cross-file via getEditorDiffService().findEntryForUri(); fallow can't follow that dispatch.
+    // fallow-ignore-next-line unused-class-member
     public findEntryForUri(uri: vscode.Uri): DiffEntryMatch | undefined {
         return this.registry.findEntryForUri(uri);
     }
 
+    // Called by disposeEditorDiffService() below; fallow can't follow that dispatch.
+    // fallow-ignore-next-line unused-class-member
     public dispose(): void {
         this.registry.clear();
     }

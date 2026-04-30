@@ -7,6 +7,7 @@ import { toFeedbackItemId, toFeedbackSessionId } from './ids';
 import type { DiffId, FeedbackItemId, FeedbackSessionId } from './ids';
 import { isUriInsideWorkspace, uriToWorkspacePath, vsCodeRangeToSerializedRange } from './location-utils';
 import type { SerializedRange } from './location-utils';
+import { truncateText } from '../utils/text-utils';
 
 const DEFAULT_MAX_SELECTED_TEXT_CHARACTERS = 4000;
 
@@ -72,14 +73,6 @@ interface StoredFeedbackItem {
 
 function defaultId(prefix: string): string {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function truncateText(text: string, maxCharacters: number): { text: string; truncated: boolean } {
-    if (text.length <= maxCharacters) {
-        return { text, truncated: false };
-    }
-
-    return { text: text.slice(0, maxCharacters), truncated: true };
 }
 
 function serializeDiffMetadata(match: DiffEntryMatch | undefined): FeedbackDiffMetadata | undefined {
@@ -150,11 +143,13 @@ export class FeedbackCaptureService {
         this.visibleEditorChangeDisposable = vscode.window.onDidChangeVisibleTextEditors(() => this.reapplyMarkers());
     }
 
+    // Used cross-file via getFeedbackCaptureService().getFeedback(); fallow can't follow that dispatch.
+    // fallow-ignore-next-line unused-class-member
     public getFeedback(): FeedbackSessionSnapshot | undefined {
         return this.session ? this.snapshot(this.session) : undefined;
     }
 
-    public async addFeedback(input: AddFeedbackInput): Promise<FeedbackSessionSnapshot> {
+    private resolveFeedbackEditor(input: AddFeedbackInput): vscode.TextEditor {
         const editor = input.editor ?? vscode.window.activeTextEditor;
         if (!editor) {
             throw new Error('No active editor is available. Select code in an editor before adding feedback.');
@@ -165,16 +160,22 @@ export class FeedbackCaptureService {
         if (!isSafeFeedbackDocument(editor.document.uri)) {
             throw new Error(`Feedback capture is not available for this document URI: ${editor.document.uri.toString()}`);
         }
+        return editor;
+    }
 
-        const currentDraftCount = this.session?.status === 'draft' ? this.session.items.length : 0;
-        const sessionId = !this.session || this.session.status === 'cancelled' || this.session.status === 'drained'
-            ? this.createSessionId()
-            : this.session.id;
+    private nextSessionId(): FeedbackSessionId {
+        if (!this.session || this.session.status === 'cancelled' || this.session.status === 'drained') {
+            return this.createSessionId();
+        }
+        return this.session.id;
+    }
+
+    private buildFeedbackItem(editor: vscode.TextEditor, input: AddFeedbackInput, draftCount: number): FeedbackItem {
         const maxSelectedTextCharacters = input.maxSelectedTextCharacters ?? DEFAULT_MAX_SELECTED_TEXT_CHARACTERS;
         const selectedText = truncateText(editor.document.getText(editor.selection), maxSelectedTextCharacters);
         const item: FeedbackItem = {
             id: this.createItemId(),
-            order: currentDraftCount + 1,
+            order: draftCount + 1,
             createdAt: this.now().toISOString(),
             uri: editor.document.uri.toString(),
             range: vsCodeRangeToSerializedRange(editor.selection),
@@ -193,6 +194,14 @@ export class FeedbackCaptureService {
         if (itemDiff !== undefined) {
             item.diff = itemDiff;
         }
+        return item;
+    }
+
+    public async addFeedback(input: AddFeedbackInput): Promise<FeedbackSessionSnapshot> {
+        const editor = this.resolveFeedbackEditor(input);
+        const draftCount = this.session?.status === 'draft' ? this.session.items.length : 0;
+        const sessionId = this.nextSessionId();
+        const item = this.buildFeedbackItem(editor, input, draftCount);
 
         const transition = feedbackReducer(this.session, {
             type: 'add',
@@ -221,6 +230,8 @@ export class FeedbackCaptureService {
         return this.snapshot(this.session!);
     }
 
+    // Used cross-file via getFeedbackCaptureService().drainFeedback(); fallow can't follow that dispatch.
+    // fallow-ignore-next-line unused-class-member
     public async drainFeedback(): Promise<FeedbackSessionSnapshot> {
         const transition = feedbackReducer(this.session, { type: 'drain' });
         this.session = transition.state;
@@ -229,6 +240,8 @@ export class FeedbackCaptureService {
         return this.snapshot(transition.drained!);
     }
 
+    // Used cross-file via getFeedbackCaptureService().clearFeedback(); fallow can't follow that dispatch.
+    // fallow-ignore-next-line unused-class-member
     public async clearFeedback(input: ClearFeedbackInput = {}): Promise<ClearFeedbackResult> {
         const scope = input.scope ?? 'all';
         const transition = feedbackReducer(this.session, { type: 'clear', scope });

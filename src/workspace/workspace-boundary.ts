@@ -70,15 +70,7 @@ export function isUriInsideWorkspace(uri: vscode.Uri): boolean {
     return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
-export function assertInsideWorkspace(uri: vscode.Uri): WorkspaceFileUri {
-    if (!isUriInsideWorkspace(uri)) {
-        throw new Error(`URI must stay within the workspace: ${uri.toString()}`);
-    }
-
-    return uri as WorkspaceFileUri;
-}
-
-export function pathFromUri(uri: vscode.Uri): WorkspacePath | undefined {
+function pathFromUri(uri: vscode.Uri): WorkspacePath | undefined {
     if (!isUriInsideWorkspace(uri)) {
         return undefined;
     }

@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Server } from 'http';
-import { Request, Response } from 'express';
+import type { Response } from 'express';
 import type { FileListingCallback } from './tools/file-tools';
 import { registerFileTools } from './tools/file-tools';
 import { registerEditTools } from './tools/edit-tools';
@@ -121,6 +121,20 @@ export class MCPServer {
         }
     }
 
+    private sendInternalError(res: Response, error: unknown, label: string): void {
+        logger.error(`Error handling ${label} request: ${error instanceof Error ? error.message : String(error)}`);
+        if (!res.headersSent) {
+            res.status(500).json({
+                jsonrpc: '2.0',
+                error: {
+                    code: -32603,
+                    message: 'Internal server error',
+                },
+                id: null,
+            });
+        }
+    }
+
     private setupRoutes(): void {
         // Handle POST requests for client-to-server communication
         this.app.post('/mcp', async (req, res) => {
@@ -128,17 +142,7 @@ export class MCPServer {
             try {
                 await this.transport.handleRequest(req, res, req.body);
             } catch (error) {
-                logger.error(`Error handling MCP request: ${error instanceof Error ? error.message : String(error)}`);
-                if (!res.headersSent) {
-                    res.status(500).json({
-                        jsonrpc: '2.0',
-                        error: {
-                            code: -32603,
-                            message: 'Internal server error',
-                        },
-                        id: null,
-                    });
-                }
+                this.sendInternalError(res, error, 'MCP');
             }
         });
 
@@ -148,17 +152,7 @@ export class MCPServer {
             try {
                 await this.transport.handleRequest(req, res, undefined);
             } catch (error) {
-                logger.error(`Error handling SSE request: ${error instanceof Error ? error.message : String(error)}`);
-                if (!res.headersSent) {
-                    res.status(500).json({
-                        jsonrpc: '2.0',
-                        error: {
-                            code: -32603,
-                            message: 'Internal server error',
-                        },
-                        id: null,
-                    });
-                }
+                this.sendInternalError(res, error, 'SSE');
             }
         });
 

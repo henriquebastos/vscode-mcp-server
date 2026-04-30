@@ -38,68 +38,84 @@ function cancelledSession<TItem>(session: FeedbackSessionState<TItem>): Feedback
     };
 }
 
+function reduceAdd<TItem>(
+    state: FeedbackSessionState<TItem> | undefined,
+    event: { sessionId: FeedbackSessionId; item: TItem },
+): FeedbackTransition<TItem> {
+    if (!state || state.status === 'cancelled' || state.status === 'drained') {
+        return {
+            state: {
+                id: event.sessionId,
+                status: 'draft',
+                items: [event.item]
+            }
+        };
+    }
+    if (state.status !== 'draft') {
+        throw new Error(`Cannot add feedback while the current feedback session is ${state.status}. Finish processing or clear it first.`);
+    }
+
+    return {
+        state: {
+            ...state,
+            items: [...state.items, event.item]
+        }
+    };
+}
+
+function reduceFinish<TItem>(state: FeedbackSessionState<TItem> | undefined): FeedbackTransition<TItem> {
+    if (!state || state.items.length === 0) {
+        throw new Error('No feedback has been captured yet.');
+    }
+    if (state.status === 'draft') {
+        return { state: { ...state, status: 'ready' } };
+    }
+    if (state.status === 'ready') {
+        return { state };
+    }
+
+    throw new Error(`Cannot finish a feedback session that is ${state.status}.`);
+}
+
+function reduceCancel<TItem>(state: FeedbackSessionState<TItem> | undefined): FeedbackTransition<TItem> {
+    if (!state) {
+        throw new Error('No feedback session is active.');
+    }
+
+    return { state: cancelledSession(state) };
+}
+
+function reduceDrain<TItem>(state: FeedbackSessionState<TItem> | undefined): FeedbackTransition<TItem> {
+    if (!state || state.status !== 'ready') {
+        throw new Error('No ready feedback session is available to drain.');
+    }
+
+    return {
+        state: { ...state, status: 'drained' },
+        drained: cloneSession(state)
+    };
+}
+
+function reduceClear<TItem>(
+    state: FeedbackSessionState<TItem> | undefined,
+    scope: FeedbackClearScope,
+): FeedbackTransition<TItem> {
+    if (!state) {
+        return { state, cleared: false };
+    }
+    if (scope !== 'all' && state.status !== scope) {
+        return { state, cleared: false };
+    }
+
+    return { state: cancelledSession(state), cleared: true };
+}
+
 export function feedbackReducer<TItem>(state: FeedbackSessionState<TItem> | undefined, event: FeedbackEvent<TItem>): FeedbackTransition<TItem> {
     switch (event.type) {
-        case 'add': {
-            if (!state || state.status === 'cancelled' || state.status === 'drained') {
-                return {
-                    state: {
-                        id: event.sessionId,
-                        status: 'draft',
-                        items: [event.item]
-                    }
-                };
-            }
-            if (state.status !== 'draft') {
-                throw new Error(`Cannot add feedback while the current feedback session is ${state.status}. Finish processing or clear it first.`);
-            }
-
-            return {
-                state: {
-                    ...state,
-                    items: [...state.items, event.item]
-                }
-            };
-        }
-        case 'finish': {
-            if (!state || state.items.length === 0) {
-                throw new Error('No feedback has been captured yet.');
-            }
-            if (state.status === 'draft') {
-                return { state: { ...state, status: 'ready' } };
-            }
-            if (state.status === 'ready') {
-                return { state };
-            }
-
-            throw new Error(`Cannot finish a feedback session that is ${state.status}.`);
-        }
-        case 'cancel': {
-            if (!state) {
-                throw new Error('No feedback session is active.');
-            }
-
-            return { state: cancelledSession(state) };
-        }
-        case 'drain': {
-            if (!state || state.status !== 'ready') {
-                throw new Error('No ready feedback session is available to drain.');
-            }
-
-            return {
-                state: { ...state, status: 'drained' },
-                drained: cloneSession(state)
-            };
-        }
-        case 'clear': {
-            if (!state) {
-                return { state, cleared: false };
-            }
-            if (event.scope !== 'all' && state.status !== event.scope) {
-                return { state, cleared: false };
-            }
-
-            return { state: cancelledSession(state), cleared: true };
-        }
+        case 'add': return reduceAdd(state, event);
+        case 'finish': return reduceFinish(state);
+        case 'cancel': return reduceCancel(state);
+        case 'drain': return reduceDrain(state);
+        case 'clear': return reduceClear(state, event.scope);
     }
 }

@@ -86,7 +86,7 @@ export function mcpRangeToVsCodeRange(range: McpRange): vscode.Range {
     return new vscode.Range(start, end);
 }
 
-export function vsCodePositionToMcpPosition(position: vscode.Position): Required<McpPosition> {
+function vsCodePositionToMcpPosition(position: vscode.Position): Required<McpPosition> {
     return {
         line: position.line + 1,
         character: position.character

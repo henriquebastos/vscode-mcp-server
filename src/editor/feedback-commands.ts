@@ -3,7 +3,7 @@ import type { FeedbackSessionSnapshot } from './feedback-service';
 import { getFeedbackCaptureService } from './feedback-service';
 
 export const FEEDBACK_ADD_COMMAND = 'vscode-mcp-server.feedback.add';
-export const FEEDBACK_FINISH_COMMAND = 'vscode-mcp-server.feedback.finish';
+const FEEDBACK_FINISH_COMMAND = 'vscode-mcp-server.feedback.finish';
 export const FEEDBACK_CANCEL_COMMAND = 'vscode-mcp-server.feedback.cancel';
 
 export const FEEDBACK_ACTIVE_CONTEXT = 'vscodeMcpServer.feedbackActive';

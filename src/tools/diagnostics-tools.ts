@@ -59,82 +59,75 @@ function getSeverityName(severity: vscode.DiagnosticSeverity): string {
  * @param includeSource Whether to include the diagnostic source
  * @returns Formatted diagnostics as string or object
  */
-function formatDiagnostics(
-    diagnostics: [vscode.Uri, vscode.Diagnostic[]][], 
+interface FormattedIssue {
+    file: string;
+    line: number;
+    column: number;
+    severity: string;
+    message: string;
+    source?: string;
+}
+
+function collectIssues(
+    diagnostics: [vscode.Uri, vscode.Diagnostic[]][],
     severities: vscode.DiagnosticSeverity[],
-    format: 'text' | 'json' = 'text',
-    includeSource: boolean = true
-): string | object {
-    console.log(`[formatDiagnostics] Format: ${format}, Include source: ${includeSource}`);
-    
-    // Filter and transform diagnostics
-    const result: Array<{
-        file: string;
-        line: number;
-        column: number;
-        severity: string;
-        message: string;
-        source?: string;
-    }> = [];
-    
-    let totalIssues = 0;
-    
+    includeSource: boolean,
+): FormattedIssue[] {
+    const result: FormattedIssue[] = [];
+
     for (const [uri, fileDiagnostics] of diagnostics) {
         if (!isUriInsideWorkspace(uri)) {
             continue;
         }
         const filePath = uriToWorkspacePath(uri);
-        
+
         for (const diagnostic of fileDiagnostics) {
-            // Skip diagnostics with severity not in the specified list
             if (!severities.includes(diagnostic.severity)) {
                 continue;
             }
-            
-            totalIssues++;
-            
-            // Convert the diagnostic to a structured object
-            const issue = {
+            const issue: FormattedIssue = {
                 file: filePath,
-                line: diagnostic.range.start.line + 1, // Convert to 1-based line number
-                column: diagnostic.range.start.character + 1, // Convert to 1-based column number
+                line: diagnostic.range.start.line + 1,
+                column: diagnostic.range.start.character + 1,
                 severity: getSeverityName(diagnostic.severity),
                 message: diagnostic.message,
             };
-            
-            // Add source if requested
             if (includeSource && diagnostic.source) {
-                Object.assign(issue, { source: diagnostic.source });
+                issue.source = diagnostic.source;
             }
-            
             result.push(issue);
         }
     }
-    
-    // Return formatted result based on requested format
-    if (format === 'json') {
-        return result;
-    }
-    
-    // Format as text
-    if (result.length === 0) {
+
+    return result;
+}
+
+function renderIssuesAsText(issues: FormattedIssue[], includeSource: boolean): string {
+    if (issues.length === 0) {
         return 'No issues found.';
     }
-    
-    let output = `Found ${totalIssues} issue(s):\n\n`;
-    
-    for (const issue of result) {
+
+    let output = `Found ${issues.length} issue(s):\n\n`;
+    for (const issue of issues) {
         output += `${issue.severity}: ${issue.file}:${issue.line}:${issue.column}\n`;
         output += `  ${issue.message}\n`;
-        
         if (includeSource && issue.source) {
             output += `  Source: ${issue.source}\n`;
         }
-        
         output += '\n';
     }
-    
     return output;
+}
+
+function formatDiagnostics(
+    diagnostics: [vscode.Uri, vscode.Diagnostic[]][],
+    severities: vscode.DiagnosticSeverity[],
+    format: 'text' | 'json' = 'text',
+    includeSource: boolean = true
+): string | object {
+    console.log(`[formatDiagnostics] Format: ${format}, Include source: ${includeSource}`);
+    const issues = collectIssues(diagnostics, severities, includeSource);
+    return format === 'json' ? issues : renderIssuesAsText(issues, includeSource);
 }
 
 /**

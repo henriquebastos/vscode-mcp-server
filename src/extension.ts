@@ -114,6 +114,21 @@ async function persistServerEnabled(context: vscode.ExtensionContext, enabled: b
     await context.globalState.update('mcpServerEnabled', enabled);
 }
 
+async function reportServerFailure(
+    context: vscode.ExtensionContext,
+    config: ResolvedMcpConfig | undefined,
+    label: string,
+    verb: string,
+    error: unknown,
+): Promise<void> {
+    serverEnabled = false;
+    await persistServerEnabled(context, false);
+    updateStatusBar(config);
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`[${label}] Failed to ${verb} MCP Server: ${message}`);
+    vscode.window.showErrorMessage(`Failed to ${verb} MCP Server: ${message}`);
+}
+
 async function enableServer(context: vscode.ExtensionContext): Promise<void> {
     await persistServerEnabled(context, true);
 
@@ -127,12 +142,7 @@ async function enableServer(context: vscode.ExtensionContext): Promise<void> {
         updateStatusBar(startedConfig);
         vscode.window.showInformationMessage(`MCP Server enabled and running at ${formatServerUrl(startedConfig)}`);
     } catch (error) {
-        serverEnabled = false;
-        await persistServerEnabled(context, false);
-        updateStatusBar(config);
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(`[enableServer] Failed to enable MCP Server: ${message}`);
-        vscode.window.showErrorMessage(`Failed to enable MCP Server: ${message}`);
+        await reportServerFailure(context, config, 'enableServer', 'enable', error);
     }
 }
 
@@ -199,12 +209,7 @@ async function restartServerForConfigChange(context: vscode.ExtensionContext): P
         } catch (stopError) {
             logger.warn(`[restartServerForConfigChange] Cleanup after failed restart failed: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
         }
-        serverEnabled = false;
-        await persistServerEnabled(context, false);
-        updateStatusBar(config);
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(`[restartServerForConfigChange] Failed to restart MCP Server: ${message}`);
-        vscode.window.showErrorMessage(`Failed to restart MCP Server: ${message}`);
+        await reportServerFailure(context, config, 'restartServerForConfigChange', 'restart', error);
     }
 }
 

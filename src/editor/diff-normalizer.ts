@@ -45,6 +45,52 @@ function hasExplicitEntryMode(input: OpenDiffInput): boolean {
     return Array.isArray(input.entries);
 }
 
+function buildSourceModeRequest(
+    input: OpenDiffInput,
+    title: string,
+    include: string[],
+    exclude: string[],
+): Extract<DiffRequest, { mode: 'source' }> {
+    if (!input.leftUri || !input.rightUri) {
+        throw new Error('Source-mode diffs require both leftUri and rightUri.');
+    }
+    const request: Extract<DiffRequest, { mode: 'source' }> = {
+        mode: 'source',
+        title,
+        leftUri: input.leftUri,
+        rightUri: input.rightUri,
+        include,
+        exclude
+    };
+    if (input.maxFiles !== undefined) {
+        request.maxFiles = input.maxFiles;
+    }
+    return request;
+}
+
+function buildEntriesModeRequest(
+    input: OpenDiffInput,
+    title: string,
+    include: string[],
+    exclude: string[],
+): Extract<DiffRequest, { mode: 'entries' }> {
+    const entries = input.entries ?? [];
+    if (entries.length === 0) {
+        throw new Error('Explicit diff entry mode requires at least one entry.');
+    }
+    const request: Extract<DiffRequest, { mode: 'entries' }> = {
+        mode: 'entries',
+        title,
+        entries: entries as NonEmptyArray<DiffEntryInput>,
+        include,
+        exclude
+    };
+    if (input.maxFiles !== undefined) {
+        request.maxFiles = input.maxFiles;
+    }
+    return request;
+}
+
 export function normalizeDiffRequest(input: OpenDiffInput): DiffRequest {
     const sourceMode = hasSourceMode(input);
     const explicitEntryMode = hasExplicitEntryMode(input);
@@ -57,43 +103,9 @@ export function normalizeDiffRequest(input: OpenDiffInput): DiffRequest {
     const include = input.include ?? [];
     const exclude = input.exclude ?? [];
 
-    if (sourceMode) {
-        if (!input.leftUri || !input.rightUri) {
-            throw new Error('Source-mode diffs require both leftUri and rightUri.');
-        }
-
-        const request: Extract<DiffRequest, { mode: 'source' }> = {
-            mode: 'source',
-            title,
-            leftUri: input.leftUri,
-            rightUri: input.rightUri,
-            include,
-            exclude
-        };
-        if (input.maxFiles !== undefined) {
-            request.maxFiles = input.maxFiles;
-        }
-
-        return request;
-    }
-
-    const entries = input.entries ?? [];
-    if (entries.length === 0) {
-        throw new Error('Explicit diff entry mode requires at least one entry.');
-    }
-
-    const request: Extract<DiffRequest, { mode: 'entries' }> = {
-        mode: 'entries',
-        title,
-        entries: entries as NonEmptyArray<DiffEntryInput>,
-        include,
-        exclude
-    };
-    if (input.maxFiles !== undefined) {
-        request.maxFiles = input.maxFiles;
-    }
-
-    return request;
+    return sourceMode
+        ? buildSourceModeRequest(input, title, include, exclude)
+        : buildEntriesModeRequest(input, title, include, exclude);
 }
 
 export function isDiffRequest(input: OpenDiffInput | DiffRequest): input is DiffRequest {
@@ -322,6 +334,52 @@ function isDeletedGitChange(change: GitChange): boolean {
     return change.status !== undefined && DELETED_GIT_STATUSES.has(change.status);
 }
 
+interface NormalizedGitChange {
+    change: GitChange;
+    leftFileUri: vscode.Uri;
+    rightFileUri: vscode.Uri;
+    relativePath: string;
+}
+
+function filterAndSortGitChanges(
+    changes: GitChange[],
+    leftRoot: vscode.Uri,
+    rightRoot: vscode.Uri,
+    input: DiffRequest,
+): NormalizedGitChange[] {
+    return changes
+        .map((change): NormalizedGitChange | undefined => {
+            const leftFileUri = change.originalUri ?? change.uri;
+            const rightFileUri = change.renameUri ?? change.uri;
+            const relativePath = relativePathWithinAnyRoot(leftRoot, rightRoot, leftFileUri, rightFileUri);
+            return relativePath ? { change, leftFileUri, rightFileUri, relativePath } : undefined;
+        })
+        .filter((entry): entry is NormalizedGitChange => Boolean(entry))
+        .filter(({ relativePath }) => passesFilters(relativePath, input.include, input.exclude))
+        .sort((first, second) => first.relativePath.localeCompare(second.relativePath));
+}
+
+function adjustGitSidesForChange(
+    change: GitChange,
+    left: ParsedSourceUri,
+    right: ParsedSourceUri,
+    leftDocument: vscode.Uri | undefined,
+    rightDocument: vscode.Uri | undefined,
+): { left: vscode.Uri | undefined; right: vscode.Uri | undefined } {
+    const rightSideIsGitSnapshot = right.kind === 'gitSnapshot' && left.kind === 'file';
+    if (isAddedGitChange(change)) {
+        return rightSideIsGitSnapshot
+            ? { left: leftDocument, right: undefined }
+            : { left: undefined, right: rightDocument };
+    }
+    if (isDeletedGitChange(change)) {
+        return rightSideIsGitSnapshot
+            ? { left: undefined, right: rightDocument }
+            : { left: leftDocument, right: undefined };
+    }
+    return { left: leftDocument, right: rightDocument };
+}
+
 async function collectFilePaths(fileSystem: DiffFileSystem, root: vscode.Uri, current: vscode.Uri = root): Promise<string[]> {
     const entries = await fileSystem.readDirectory(current);
     const files: string[] = [];
@@ -364,6 +422,34 @@ export class DiffNormalizer {
         return entries.map(normalizeExplicitEntry);
     }
 
+    private async normalizeFileSourceEntry(
+        left: ParsedSourceUri,
+        right: ParsedSourceUri,
+        input: Extract<DiffRequest, { mode: 'source' }>,
+    ): Promise<NormalizedCommandEntry[]> {
+        const relativePath = path.basename(right.fileUri.fsPath);
+        if (!passesFilters(relativePath, input.include, input.exclude)) {
+            throw new Error('No diff entries matched the provided include/exclude filters.');
+        }
+        const leftDocument = await this.documentUriForSource(left);
+        const rightDocument = await this.documentUriForSource(right);
+        return [normalizeUriEntry(undefined, leftDocument, rightDocument, 0)];
+    }
+
+    private normalizeFolderSourceEntries(
+        left: ParsedSourceUri,
+        right: ParsedSourceUri,
+        input: Extract<DiffRequest, { mode: 'source' }>,
+    ): Promise<NormalizedCommandEntry[]> {
+        if (left.kind === 'gitDocument' || right.kind === 'gitDocument') {
+            throw new Error('git: source mode is only supported for exact file document URIs; use git+file:?ref=... for folder or tree sources.');
+        }
+        if (left.kind !== 'file' || right.kind !== 'file') {
+            return this.normalizeGitFolderEntries(left, right, input);
+        }
+        return this.normalizeFolderEntries(left.fileUri, right.fileUri, input);
+    }
+
     private async normalizeSourceEntries(input: Extract<DiffRequest, { mode: 'source' }>): Promise<NormalizedCommandEntry[]> {
         const left = parseSourceUri(input.leftUri, 'leftUri');
         const right = parseSourceUri(input.rightUri, 'rightUri');
@@ -371,25 +457,11 @@ export class DiffNormalizer {
         const rightStat = await this.fileSystem.stat(right.fileUri);
 
         if (isFile(leftStat) && isFile(rightStat)) {
-            const relativePath = path.basename(right.fileUri.fsPath);
-            if (!passesFilters(relativePath, input.include, input.exclude)) {
-                throw new Error('No diff entries matched the provided include/exclude filters.');
-            }
-            const leftDocument = await this.documentUriForSource(left);
-            const rightDocument = await this.documentUriForSource(right);
-            return [normalizeUriEntry(undefined, leftDocument, rightDocument, 0)];
+            return this.normalizeFileSourceEntry(left, right, input);
         }
-
         if (isDirectory(leftStat) && isDirectory(rightStat)) {
-            if (left.kind === 'gitDocument' || right.kind === 'gitDocument') {
-                throw new Error('git: source mode is only supported for exact file document URIs; use git+file:?ref=... for folder or tree sources.');
-            }
-            if (left.kind !== 'file' || right.kind !== 'file') {
-                return this.normalizeGitFolderEntries(left, right, input);
-            }
-            return this.normalizeFolderEntries(left.fileUri, right.fileUri, input);
+            return this.normalizeFolderSourceEntries(left, right, input);
         }
-
         throw new Error('Source-mode URI diffs require both sources to be files or both sources to be folders.');
     }
 
@@ -432,38 +504,13 @@ export class DiffNormalizer {
         }
 
         const changes = await this.gitChangesForSources(repository, left, right);
+        const normalizedChanges = filterAndSortGitChanges(changes, left.fileUri, right.fileUri, input);
         const entries: NormalizedCommandEntry[] = [];
-        const normalizedChanges = changes
-            .map(change => {
-                const leftFileUri = change.originalUri ?? change.uri;
-                const rightFileUri = change.renameUri ?? change.uri;
-                const relativePath = relativePathWithinAnyRoot(left.fileUri, right.fileUri, leftFileUri, rightFileUri);
-                return relativePath ? { change, leftFileUri, rightFileUri, relativePath } : undefined;
-            })
-            .filter((change): change is { change: GitChange; leftFileUri: vscode.Uri; rightFileUri: vscode.Uri; relativePath: string } => Boolean(change))
-            .filter(({ relativePath }) => passesFilters(relativePath, input.include, input.exclude))
-            .sort((first, second) => first.relativePath.localeCompare(second.relativePath));
-
         for (const { change, leftFileUri, rightFileUri, relativePath } of normalizedChanges) {
-            let leftDocument: vscode.Uri | undefined = await this.documentUriForGitSide(left, leftFileUri, gitApi);
-            let rightDocument: vscode.Uri | undefined = await this.documentUriForGitSide(right, rightFileUri, gitApi);
-            const rightSideIsGitSnapshot = right.kind === 'gitSnapshot' && left.kind === 'file';
-
-            if (isAddedGitChange(change)) {
-                if (rightSideIsGitSnapshot) {
-                    rightDocument = undefined;
-                } else {
-                    leftDocument = undefined;
-                }
-            } else if (isDeletedGitChange(change)) {
-                if (rightSideIsGitSnapshot) {
-                    leftDocument = undefined;
-                } else {
-                    rightDocument = undefined;
-                }
-            }
-
-            entries.push(normalizeUriEntry(relativePath, leftDocument, rightDocument, entries.length));
+            const leftDocument = await this.documentUriForGitSide(left, leftFileUri, gitApi);
+            const rightDocument = await this.documentUriForGitSide(right, rightFileUri, gitApi);
+            const sides = adjustGitSidesForChange(change, left, right, leftDocument, rightDocument);
+            entries.push(normalizeUriEntry(relativePath, sides.left, sides.right, entries.length));
         }
 
         if (entries.length === 0) {

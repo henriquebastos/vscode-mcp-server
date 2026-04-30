@@ -1,14 +1,27 @@
 import * as vscode from 'vscode';
-import type { AnnotationKind, AnnotationStore, CalloutEntry, GutterMarkerEntry, HoverNoteEntry } from './annotation-store';
-
-interface RangesForUri {
-    uri: vscode.Uri;
-    ranges: vscode.Range[];
-}
+import type { AnnotationKind, AnnotationStore, CalloutEntry, GutterMarkerEntry, HighlightEntry, HoverNoteEntry } from './annotation-store';
+import { createUntrustedMarkdown, escapeMarkdownText, sanitizeGuidedMarkdown } from './markdown-utils';
 
 interface EntriesForUri<TEntry> {
     uri: vscode.Uri;
     entries: TEntry[];
+}
+
+type KindedUriEntry = { uri: vscode.Uri; kind: AnnotationKind };
+
+function groupEntriesByKindAndUri<TEntry extends KindedUriEntry>(
+    entries: Iterable<TEntry>,
+): Map<AnnotationKind, Map<string, EntriesForUri<TEntry>>> {
+    const byKindAndUri = new Map<AnnotationKind, Map<string, EntriesForUri<TEntry>>>();
+    for (const entry of entries) {
+        const byUri = byKindAndUri.get(entry.kind) ?? new Map<string, EntriesForUri<TEntry>>();
+        const key = entry.uri.toString();
+        const combined = byUri.get(key) ?? { uri: entry.uri, entries: [] };
+        combined.entries.push(entry);
+        byUri.set(key, combined);
+        byKindAndUri.set(entry.kind, byUri);
+    }
+    return byKindAndUri;
 }
 
 function kindThemeColor(kind: AnnotationKind): vscode.ThemeColor {
@@ -127,23 +140,6 @@ function createHoverNoteDecorationOptions(kind: AnnotationKind): vscode.Decorati
     return {
         textDecoration: `underline wavy ${markerIconColor(kind)}`
     };
-}
-
-function escapeMarkdownText(text: string): string {
-    return text.replace(/[\\`*_{}\[\]()#+\-.!|>]/g, character => `\\${character}`);
-}
-
-function sanitizeGuidedMarkdown(markdown: string): string {
-    return markdown
-        .replace(/!\[([^\]]*)\]\([^)]+\)/g, (_match, altText: string) => altText ? `[image omitted: ${escapeMarkdownText(altText)}]` : '[image omitted]')
-        .replace(/\[([^\]]+)\]\(\s*(?:file|data|command|vscode|javascript):[^)]*\)/gi, (_match, linkText: string) => escapeMarkdownText(linkText));
-}
-
-function createUntrustedMarkdown(value: string): vscode.MarkdownString {
-    const markdown = new vscode.MarkdownString(value);
-    markdown.isTrusted = false;
-    markdown.supportHtml = false;
-    return markdown;
 }
 
 function createInlineCalloutOption(editor: vscode.TextEditor, entry: CalloutEntry): vscode.DecorationOptions {
@@ -279,107 +275,65 @@ export class VsCodeAnnotationRenderer {
         return decorationType;
     }
 
-    private applyHighlights(store: AnnotationStore): void {
-        const rangesByKindAndUri = new Map<AnnotationKind, Map<string, RangesForUri>>();
-
-        for (const group of store.groups()) {
-            for (const entry of group.highlights) {
-                const rangesByUri = rangesByKindAndUri.get(entry.kind) ?? new Map<string, RangesForUri>();
-                const key = entry.uri.toString();
-                const combined = rangesByUri.get(key) ?? { uri: entry.uri, ranges: [] };
-                combined.ranges.push(entry.range);
-                rangesByUri.set(key, combined);
-                rangesByKindAndUri.set(entry.kind, rangesByUri);
-            }
+    private applySurface<TEntry extends KindedUriEntry>(
+        entries: Iterable<TEntry>,
+        decorationCache: Map<AnnotationKind, vscode.TextEditorDecorationType>,
+        ensureDecorationType: (kind: AnnotationKind) => vscode.TextEditorDecorationType,
+        toDecorations: (editor: vscode.TextEditor, entries: TEntry[]) => readonly (vscode.Range | vscode.DecorationOptions)[],
+    ): void {
+        const byKindAndUri = groupEntriesByKindAndUri(entries);
+        for (const kind of byKindAndUri.keys()) {
+            ensureDecorationType(kind);
         }
-
-        for (const kind of rangesByKindAndUri.keys()) {
-            this.getHighlightDecorationType(kind);
-        }
-        for (const [kind, decorationType] of this.highlightDecorationTypes) {
-            const rangesByUri = rangesByKindAndUri.get(kind) ?? new Map<string, RangesForUri>();
+        for (const [kind, decorationType] of decorationCache) {
+            const byUri = byKindAndUri.get(kind);
             for (const editor of vscode.window.visibleTextEditors) {
-                const ranges = rangesByUri.get(editor.document.uri.toString())?.ranges ?? [];
-                editor.setDecorations(decorationType, ranges);
+                const found = byUri?.get(editor.document.uri.toString());
+                const options = found ? toDecorations(editor, found.entries) : [];
+                editor.setDecorations(decorationType, options as vscode.Range[]);
             }
         }
+    }
+
+    private *flattenSurface<TEntry>(store: AnnotationStore, pick: (group: { highlights: HighlightEntry[]; callouts: CalloutEntry[]; gutterMarkers: GutterMarkerEntry[]; hoverNotes: HoverNoteEntry[] }) => TEntry[]): Iterable<TEntry> {
+        for (const group of store.groups()) {
+            yield* pick(group);
+        }
+    }
+
+    private applyHighlights(store: AnnotationStore): void {
+        this.applySurface<HighlightEntry>(
+            this.flattenSurface(store, g => g.highlights),
+            this.highlightDecorationTypes,
+            kind => this.getHighlightDecorationType(kind),
+            (_editor, entries) => entries.map(entry => entry.range),
+        );
     }
 
     private applyCallouts(store: AnnotationStore): void {
-        const calloutsByKindAndUri = new Map<AnnotationKind, Map<string, EntriesForUri<CalloutEntry>>>();
-
-        for (const group of store.groups()) {
-            for (const entry of group.callouts) {
-                const calloutsByUri = calloutsByKindAndUri.get(entry.kind) ?? new Map<string, EntriesForUri<CalloutEntry>>();
-                const key = entry.uri.toString();
-                const combined = calloutsByUri.get(key) ?? { uri: entry.uri, entries: [] };
-                combined.entries.push(entry);
-                calloutsByUri.set(key, combined);
-                calloutsByKindAndUri.set(entry.kind, calloutsByUri);
-            }
-        }
-
-        for (const kind of calloutsByKindAndUri.keys()) {
-            this.getCalloutDecorationType(kind);
-        }
-        for (const [kind, decorationType] of this.calloutDecorationTypes) {
-            const calloutsByUri = calloutsByKindAndUri.get(kind) ?? new Map<string, EntriesForUri<CalloutEntry>>();
-            for (const editor of vscode.window.visibleTextEditors) {
-                const options = calloutsByUri.get(editor.document.uri.toString())?.entries.map(entry => createInlineCalloutOption(editor, entry)) ?? [];
-                editor.setDecorations(decorationType, options);
-            }
-        }
+        this.applySurface<CalloutEntry>(
+            this.flattenSurface(store, g => g.callouts),
+            this.calloutDecorationTypes,
+            kind => this.getCalloutDecorationType(kind),
+            (editor, entries) => entries.map(entry => createInlineCalloutOption(editor, entry)),
+        );
     }
 
     private applyGutterMarkers(store: AnnotationStore): void {
-        const markersByKindAndUri = new Map<AnnotationKind, Map<string, EntriesForUri<GutterMarkerEntry>>>();
-
-        for (const group of store.groups()) {
-            for (const entry of group.gutterMarkers) {
-                const markersByUri = markersByKindAndUri.get(entry.kind) ?? new Map<string, EntriesForUri<GutterMarkerEntry>>();
-                const key = entry.uri.toString();
-                const combined = markersByUri.get(key) ?? { uri: entry.uri, entries: [] };
-                combined.entries.push(entry);
-                markersByUri.set(key, combined);
-                markersByKindAndUri.set(entry.kind, markersByUri);
-            }
-        }
-
-        for (const kind of markersByKindAndUri.keys()) {
-            this.getGutterMarkerDecorationType(kind);
-        }
-        for (const [kind, decorationType] of this.gutterMarkerDecorationTypes) {
-            const markersByUri = markersByKindAndUri.get(kind) ?? new Map<string, EntriesForUri<GutterMarkerEntry>>();
-            for (const editor of vscode.window.visibleTextEditors) {
-                const options = markersByUri.get(editor.document.uri.toString())?.entries.map(createGutterMarkerOption) ?? [];
-                editor.setDecorations(decorationType, options);
-            }
-        }
+        this.applySurface<GutterMarkerEntry>(
+            this.flattenSurface(store, g => g.gutterMarkers),
+            this.gutterMarkerDecorationTypes,
+            kind => this.getGutterMarkerDecorationType(kind),
+            (_editor, entries) => entries.map(createGutterMarkerOption),
+        );
     }
 
     private applyHoverNotes(store: AnnotationStore): void {
-        const notesByKindAndUri = new Map<AnnotationKind, Map<string, EntriesForUri<HoverNoteEntry>>>();
-
-        for (const group of store.groups()) {
-            for (const entry of group.hoverNotes) {
-                const notesByUri = notesByKindAndUri.get(entry.kind) ?? new Map<string, EntriesForUri<HoverNoteEntry>>();
-                const key = entry.uri.toString();
-                const combined = notesByUri.get(key) ?? { uri: entry.uri, entries: [] };
-                combined.entries.push(entry);
-                notesByUri.set(key, combined);
-                notesByKindAndUri.set(entry.kind, notesByUri);
-            }
-        }
-
-        for (const kind of notesByKindAndUri.keys()) {
-            this.getHoverNoteDecorationType(kind);
-        }
-        for (const [kind, decorationType] of this.hoverNoteDecorationTypes) {
-            const notesByUri = notesByKindAndUri.get(kind) ?? new Map<string, EntriesForUri<HoverNoteEntry>>();
-            for (const editor of vscode.window.visibleTextEditors) {
-                const options = notesByUri.get(editor.document.uri.toString())?.entries.map(createHoverNoteOption) ?? [];
-                editor.setDecorations(decorationType, options);
-            }
-        }
+        this.applySurface<HoverNoteEntry>(
+            this.flattenSurface(store, g => g.hoverNotes),
+            this.hoverNoteDecorationTypes,
+            kind => this.getHoverNoteDecorationType(kind),
+            (_editor, entries) => entries.map(createHoverNoteOption),
+        );
     }
 }

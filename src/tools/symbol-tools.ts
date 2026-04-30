@@ -10,35 +10,63 @@ import { logger } from '../utils/logger';
  * @param kind The symbol kind enum value
  * @returns String representation of the symbol kind
  */
+const SYMBOL_KIND_NAMES: Readonly<Record<vscode.SymbolKind, string>> = {
+    [vscode.SymbolKind.File]: 'File',
+    [vscode.SymbolKind.Module]: 'Module',
+    [vscode.SymbolKind.Namespace]: 'Namespace',
+    [vscode.SymbolKind.Package]: 'Package',
+    [vscode.SymbolKind.Class]: 'Class',
+    [vscode.SymbolKind.Method]: 'Method',
+    [vscode.SymbolKind.Property]: 'Property',
+    [vscode.SymbolKind.Field]: 'Field',
+    [vscode.SymbolKind.Constructor]: 'Constructor',
+    [vscode.SymbolKind.Enum]: 'Enum',
+    [vscode.SymbolKind.Interface]: 'Interface',
+    [vscode.SymbolKind.Function]: 'Function',
+    [vscode.SymbolKind.Variable]: 'Variable',
+    [vscode.SymbolKind.Constant]: 'Constant',
+    [vscode.SymbolKind.String]: 'String',
+    [vscode.SymbolKind.Number]: 'Number',
+    [vscode.SymbolKind.Boolean]: 'Boolean',
+    [vscode.SymbolKind.Array]: 'Array',
+    [vscode.SymbolKind.Object]: 'Object',
+    [vscode.SymbolKind.Key]: 'Key',
+    [vscode.SymbolKind.Null]: 'Null',
+    [vscode.SymbolKind.EnumMember]: 'EnumMember',
+    [vscode.SymbolKind.Struct]: 'Struct',
+    [vscode.SymbolKind.Event]: 'Event',
+    [vscode.SymbolKind.Operator]: 'Operator',
+    [vscode.SymbolKind.TypeParameter]: 'TypeParameter',
+};
+
 function symbolKindToString(kind: vscode.SymbolKind): string {
-    switch (kind) {
-        case vscode.SymbolKind.File: return 'File';
-        case vscode.SymbolKind.Module: return 'Module';
-        case vscode.SymbolKind.Namespace: return 'Namespace';
-        case vscode.SymbolKind.Package: return 'Package';
-        case vscode.SymbolKind.Class: return 'Class';
-        case vscode.SymbolKind.Method: return 'Method';
-        case vscode.SymbolKind.Property: return 'Property';
-        case vscode.SymbolKind.Field: return 'Field';
-        case vscode.SymbolKind.Constructor: return 'Constructor';
-        case vscode.SymbolKind.Enum: return 'Enum';
-        case vscode.SymbolKind.Interface: return 'Interface';
-        case vscode.SymbolKind.Function: return 'Function';
-        case vscode.SymbolKind.Variable: return 'Variable';
-        case vscode.SymbolKind.Constant: return 'Constant';
-        case vscode.SymbolKind.String: return 'String';
-        case vscode.SymbolKind.Number: return 'Number';
-        case vscode.SymbolKind.Boolean: return 'Boolean';
-        case vscode.SymbolKind.Array: return 'Array';
-        case vscode.SymbolKind.Object: return 'Object';
-        case vscode.SymbolKind.Key: return 'Key';
-        case vscode.SymbolKind.Null: return 'Null';
-        case vscode.SymbolKind.EnumMember: return 'EnumMember';
-        case vscode.SymbolKind.Struct: return 'Struct';
-        case vscode.SymbolKind.Event: return 'Event';
-        case vscode.SymbolKind.Operator: return 'Operator';
-        case vscode.SymbolKind.TypeParameter: return 'TypeParameter';
-        default: return 'Unknown';
+    return SYMBOL_KIND_NAMES[kind] ?? 'Unknown';
+}
+
+function serializeOneBasedRange(range: vscode.Range): { start: { line: number; character: number }; end: { line: number; character: number } } {
+    return {
+        start: { line: range.start.line + 1, character: range.start.character },
+        end: { line: range.end.line + 1, character: range.end.character },
+    };
+}
+
+function findOpenDocument(uri: vscode.Uri): vscode.TextDocument | undefined {
+    const uriString = uri.toString();
+    return vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uriString);
+}
+
+async function readLineFromDisk(uri: vscode.Uri, line: number): Promise<string | undefined> {
+    try {
+        const content = await vscode.workspace.fs.readFile(uri);
+        const text = Buffer.from(content).toString('utf8');
+        const lines = text.split(/\r?\n/);
+        if (line < 0 || line >= lines.length) {
+            return undefined;
+        }
+        return lines[line]?.trim();
+    } catch (error) {
+        logger.warn(`[getPreview] Could not read file: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
     }
 }
 
@@ -54,38 +82,18 @@ async function getPreview(uri: vscode.Uri, line?: number): Promise<string | unde
     }
 
     try {
-        // Try to open the document from VS Code's text document manager
-        const documents = vscode.workspace.textDocuments;
-        let document = documents.find(doc => doc.uri.toString() === uri.toString());
-
-        // If document is not already open, try to read it from the file system
-        if (!document) {
-            try {
-                const content = await vscode.workspace.fs.readFile(uri);
-                const text = Buffer.from(content).toString('utf8');
-                const lines = text.split(/\r?\n/);
-
-                if (line >= 0 && line < lines.length) {
-                    const lineText = lines[line];
-                    if (lineText !== undefined) {
-                        return lineText.trim();
-                    }
-                }
-            } catch (error) {
-                logger.warn(`[getPreview] Could not read file: ${error instanceof Error ? error.message : String(error)}`);
+        const document = findOpenDocument(uri);
+        if (document) {
+            if (line < 0 || line >= document.lineCount) {
                 return undefined;
             }
-        } else {
-            // Document is open, get the line directly
-            if (line >= 0 && line < document.lineCount) {
-                return document.lineAt(line).text.trim();
-            }
+            return document.lineAt(line).text.trim();
         }
+        return await readLineFromDisk(uri, line);
     } catch (error) {
         logger.warn(`[getPreview] Error getting preview: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
     }
-
-    return undefined;
 }
 
 /**
@@ -212,7 +220,7 @@ export async function getSymbolHoverInfo(
  * @param maxResults Maximum number of results to return
  * @returns Array of formatted symbol information objects
  */
-export async function searchWorkspaceSymbols(query: string, maxResults: number = 10): Promise<{
+async function searchWorkspaceSymbols(query: string, maxResults: number = 10): Promise<{
     symbols: Array<{
         name: string;
         kind: string;
@@ -308,7 +316,7 @@ interface SerializedDocumentSymbol {
     children?: number;
 }
 
-export async function getDocumentSymbols(
+async function getDocumentSymbols(
     uri: vscode.Uri,
     maxDepth?: number
 ): Promise<{
@@ -330,52 +338,32 @@ export async function getDocumentSymbols(
         const flatSymbols: SerializedDocumentSymbol[] = [];
         const kindCounts: Record<string, number> = {};
 
-        // Recursive function to process symbols and their children
+        function visitSymbol(symbol: vscode.DocumentSymbol, depth: number) {
+            const kindString = symbolKindToString(symbol.kind);
+            kindCounts[kindString] = (kindCounts[kindString] || 0) + 1;
+
+            const processedSymbol: SerializedDocumentSymbol = {
+                name: symbol.name,
+                kind: kindString,
+                range: serializeOneBasedRange(symbol.range),
+                selectionRange: serializeOneBasedRange(symbol.selectionRange),
+                depth
+            };
+            if (symbol.detail) {
+                processedSymbol.detail = symbol.detail;
+            }
+            if (symbol.children && symbol.children.length > 0) {
+                processedSymbol.children = symbol.children.length;
+            }
+            flatSymbols.push(processedSymbol);
+        }
+
         function processSymbols(symbols: vscode.DocumentSymbol[], depth: number = 0) {
+            if (maxDepth !== undefined && depth > maxDepth) {
+                return;
+            }
             for (const symbol of symbols) {
-                // Skip if max depth exceeded
-                if (maxDepth !== undefined && depth > maxDepth) {
-                    continue;
-                }
-
-                const kindString = symbolKindToString(symbol.kind);
-                kindCounts[kindString] = (kindCounts[kindString] || 0) + 1;
-
-                const processedSymbol: SerializedDocumentSymbol = {
-                    name: symbol.name,
-                    kind: kindString,
-                    range: {
-                        start: {
-                            line: symbol.range.start.line + 1,
-                            character: symbol.range.start.character
-                        },
-                        end: {
-                            line: symbol.range.end.line + 1,
-                            character: symbol.range.end.character
-                        }
-                    },
-                    selectionRange: {
-                        start: {
-                            line: symbol.selectionRange.start.line + 1,
-                            character: symbol.selectionRange.start.character
-                        },
-                        end: {
-                            line: symbol.selectionRange.end.line + 1,
-                            character: symbol.selectionRange.end.character
-                        }
-                    },
-                    depth
-                };
-                if (symbol.detail) {
-                    processedSymbol.detail = symbol.detail;
-                }
-                if (symbol.children && symbol.children.length > 0) {
-                    processedSymbol.children = symbol.children.length;
-                }
-
-                flatSymbols.push(processedSymbol);
-
-                // Recursively process children
+                visitSymbol(symbol, depth);
                 if (symbol.children && symbol.children.length > 0) {
                     processSymbols(symbol.children, depth + 1);
                 }
@@ -399,6 +387,67 @@ export async function getDocumentSymbols(
  * Registers MCP symbol-related tools with the server
  * @param server MCP server instance
  */
+function formatHoverEntry(hover: { preview?: string | undefined; contents: string[]; range?: { start: { line: number; character: number }; end: { line: number; character: number } } | undefined }): string {
+    let text = '';
+    if (hover.preview) {
+        text += `Code context: \`${hover.preview}\`\n\n`;
+    }
+    for (const content of hover.contents) {
+        text += `${content}\n\n`;
+    }
+    if (hover.range) {
+        text += `Symbol range: [${hover.range.start.line}:${hover.range.start.character}] to [${hover.range.end.line}:${hover.range.end.character}]\n\n`;
+    }
+    return text;
+}
+
+async function locateSymbolPosition(
+    uri: vscode.Uri,
+    line: number,
+    symbol: string,
+    rawPath: string,
+): Promise<{ position: vscode.Position; character: number } | { notFoundMessage: string }> {
+    const zeroBasedLine = line - 1;
+    try {
+        await vscode.workspace.fs.stat(uri);
+    } catch {
+        throw new Error(`File not found: ${rawPath}`);
+    }
+
+    const lineText = await getLineText(uri, zeroBasedLine);
+    if (!lineText) {
+        throw new Error(`Line ${line} not found in file: ${rawPath}`);
+    }
+
+    const character = findSymbolInLine(lineText, symbol);
+    if (character === -1) {
+        return { notFoundMessage: `Symbol "${symbol}" not found on line ${line} in file: ${rawPath}` };
+    }
+
+    return { position: new vscode.Position(zeroBasedLine, character), character };
+}
+
+async function getSymbolDefinitionText(rawPath: string, line: number, symbol: string): Promise<string> {
+    const workspacePath = assertWorkspacePath(rawPath);
+    const uri = workspacePathToUri(workspacePath);
+    const located = await locateSymbolPosition(uri, line, symbol, rawPath);
+    if ('notFoundMessage' in located) {
+        return located.notFoundMessage;
+    }
+
+    const { position, character } = located;
+    const hoverResult = await getSymbolHoverInfo(uri, position);
+    if (hoverResult.hovers.length === 0) {
+        return `No definition information found for symbol "${symbol}" at ${workspacePath}:${line}:${character}.`;
+    }
+
+    let resultText = `Definition information for symbol "${symbol}" at ${workspacePath}:${line}:${character}:\n\n`;
+    for (const hover of hoverResult.hovers) {
+        resultText += formatHoverEntry(hover);
+    }
+    return resultText;
+}
+
 export function registerSymbolTools(server: McpServer): void {
     // Add search_symbols_code tool
     server.tool(
@@ -475,80 +524,10 @@ export function registerSymbolTools(server: McpServer): void {
         },
         async ({ path, line, symbol }): Promise<CallToolResult> => {
             logger.info(`[get_symbol_definition_code] Tool called with path="${path}", line=${line}, symbol="${symbol}"`);
-
-            // Convert 1-based input to 0-based for VS Code API
-            const zeroBasedLine = line - 1;
             try {
-                const workspacePath = assertWorkspacePath(path);
-                const uri = workspacePathToUri(workspacePath);
-
-                // Check if file exists
-                try {
-                    await vscode.workspace.fs.stat(uri);
-                } catch (error) {
-                    throw new Error(`File not found: ${path}`);
-                }
-
-                // Get the content of the specified line
-                const lineText = await getLineText(uri, zeroBasedLine);
-                if (!lineText) {
-                    throw new Error(`Line ${line} not found in file: ${path}`);
-                }
-
-                // Find the character position of the symbol in the line
-                const character = findSymbolInLine(lineText, symbol);
-                if (character === -1) {
-                    return {
-                        content: [
-                            {
-                                type: 'text',
-                                text: `Symbol "${symbol}" not found on line ${line} in file: ${path}`
-                            }
-                        ]
-                    };
-                }
-
-                // Create a position object
-                const position = new vscode.Position(zeroBasedLine, character);
-
-                // Get hover information
-                const hoverResult = await getSymbolHoverInfo(uri, position);
-
-                let resultText: string;
-
-                if (hoverResult.hovers.length === 0) {
-                    resultText = `No definition information found for symbol "${symbol}" at ${workspacePath}:${line}:${character}.`;
-                } else {
-                    resultText = `Definition information for symbol "${symbol}" at ${workspacePath}:${line}:${character}:\n\n`;
-
-                    for (const hover of hoverResult.hovers) {
-                        // Add preview if available
-                        if (hover.preview) {
-                            resultText += `Code context: \`${hover.preview}\`\n\n`;
-                        }
-
-                        // Add contents
-                        for (const content of hover.contents) {
-                            resultText += `${content}\n\n`;
-                        }
-
-                        // Add range if available
-                        if (hover.range) {
-                            resultText += `Symbol range: [${hover.range.start.line}:${hover.range.start.character}] to [${hover.range.end.line}:${hover.range.end.character}]\n\n`;
-                        }
-                    }
-                }
-
-                const callResult: CallToolResult = {
-                    content: [
-                        {
-                            type: 'text',
-                            text: resultText
-                        }
-                    ]
-                };
+                const result = await getSymbolDefinitionText(path, line, symbol);
                 logger.info('[get_symbol_definition_code] Successfully completed');
-                return callResult;
+                return { content: [{ type: 'text', text: result }] };
             } catch (error) {
                 logger.error(`[get_symbol_definition_code] Error in tool: ${error instanceof Error ? error.message : String(error)}`);
                 throw error;

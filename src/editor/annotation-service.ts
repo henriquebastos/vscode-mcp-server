@@ -12,6 +12,7 @@ import type {
     HoverNoteEntry
 } from './annotation-store';
 import { VsCodeAnnotationRenderer } from './annotation-renderer';
+import { createUntrustedMarkdown, escapeMarkdownText, sanitizeGuidedMarkdown } from './markdown-utils';
 import type { AnnotationId } from './ids';
 import { toAnnotationId } from './ids';
 import type { McpRange } from './location-utils';
@@ -100,6 +101,23 @@ export interface ClearAnnotationsResult {
 
 const DEFAULT_ANNOTATION_ID = toAnnotationId('current');
 const DEFAULT_ANNOTATION_KIND: AnnotationKind = 'focus';
+
+interface AnnotationOptionsInput {
+    id?: string | undefined;
+    mode?: AnnotationMode | undefined;
+    kind?: AnnotationKind | undefined;
+}
+
+function resolveAnnotationOptions(
+    input: AnnotationOptionsInput,
+    defaultKind: AnnotationKind = DEFAULT_ANNOTATION_KIND,
+): { id: AnnotationId; mode: AnnotationMode; kind: AnnotationKind } {
+    return {
+        id: input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID,
+        mode: input.mode ?? 'replace',
+        kind: input.kind ?? defaultKind,
+    };
+}
 const CODELENS_NOTE_NOOP_COMMAND = 'vscode-mcp-server.codelensNote.noop';
 
 let codeLensNoteNoopCommandDisposable: vscode.Disposable | undefined;
@@ -199,23 +217,6 @@ function createHoverNoteEntry(
     return entry;
 }
 
-function escapeMarkdownText(text: string): string {
-    return text.replace(/[\\`*_{}\[\]()#+\-.!|>]/g, character => `\\${character}`);
-}
-
-function sanitizeGuidedMarkdown(markdown: string): string {
-    return markdown
-        .replace(/!\[([^\]]*)\]\([^)]+\)/g, (_match, altText: string) => altText ? `[image omitted: ${escapeMarkdownText(altText)}]` : '[image omitted]')
-        .replace(/\[([^\]]+)\]\(\s*(?:file|data|command|vscode|javascript):[^)]*\)/gi, (_match, linkText: string) => escapeMarkdownText(linkText));
-}
-
-function createUntrustedMarkdown(value: string): vscode.MarkdownString {
-    const markdown = new vscode.MarkdownString(value);
-    markdown.isTrusted = false;
-    markdown.supportHtml = false;
-    return markdown;
-}
-
 export class EditorAnnotationService {
     private readonly store = new AnnotationStore({ workspacePathForUri: workspacePathIfAvailable });
     private readonly renderer = new VsCodeAnnotationRenderer(DEFAULT_ANNOTATION_KIND);
@@ -236,9 +237,7 @@ export class EditorAnnotationService {
     }
 
     public async setHighlights(input: SetHighlightsInput): Promise<AnnotationOperationResult> {
-        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
-        const mode = input.mode ?? 'replace';
-        const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
+        const { id, mode, kind } = resolveAnnotationOptions(input);
         const newEntries: HighlightEntry[] = [];
 
         for (const inputRange of input.ranges) {
@@ -253,9 +252,7 @@ export class EditorAnnotationService {
     }
 
     public async setInlineCallout(input: SetInlineCalloutInput): Promise<AnnotationOperationResult> {
-        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
-        const mode = input.mode ?? 'replace';
-        const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
+        const { id, mode, kind } = resolveAnnotationOptions(input);
         const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const editor = target.editor ?? getVisibleEditor(target.uri);
 
@@ -273,9 +270,7 @@ export class EditorAnnotationService {
     }
 
     public async setGutterMarkers(input: SetGutterMarkersInput): Promise<AnnotationOperationResult> {
-        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
-        const mode = input.mode ?? 'replace';
-        const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
+        const { id, mode, kind } = resolveAnnotationOptions(input);
         const newEntries: GutterMarkerEntry[] = [];
 
         for (const line of input.lines ?? []) {
@@ -301,9 +296,7 @@ export class EditorAnnotationService {
     }
 
     public async setHoverNote(input: SetHoverNoteInput): Promise<AnnotationOperationResult> {
-        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
-        const mode = input.mode ?? 'replace';
-        const kind = input.kind ?? 'info';
+        const { id, mode, kind } = resolveAnnotationOptions(input, 'info');
         const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const range = mcpRangeToVsCodeRange(input.range);
 
@@ -314,9 +307,7 @@ export class EditorAnnotationService {
     }
 
     public async setCodeLensNote(input: SetCodeLensNoteInput): Promise<AnnotationOperationResult> {
-        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
-        const mode = input.mode ?? 'replace';
-        const kind = input.kind ?? DEFAULT_ANNOTATION_KIND;
+        const { id, mode, kind } = resolveAnnotationOptions(input);
         const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const range = mcpRangeToVsCodeRange(input.range);
 
@@ -327,9 +318,7 @@ export class EditorAnnotationService {
     }
 
     public async setExplanationComment(input: SetExplanationCommentInput): Promise<AnnotationOperationResult> {
-        const id = input.id !== undefined ? toAnnotationId(input.id) : DEFAULT_ANNOTATION_ID;
-        const mode = input.mode ?? 'replace';
-        const kind = input.kind ?? 'info';
+        const { id, mode, kind } = resolveAnnotationOptions(input, 'info');
         const existingGroup = this.store.getGroup(id);
         const target = await resolveEditorTarget(annotationTargetForRange(input, input.range));
         const range = mcpRangeToVsCodeRange(input.range);

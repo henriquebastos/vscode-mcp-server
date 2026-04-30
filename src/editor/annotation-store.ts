@@ -100,7 +100,7 @@ function createEmptyGroup(): AnnotationGroup {
     };
 }
 
-export function annotationGroupHasEntries(group: AnnotationGroup): boolean {
+function annotationGroupHasEntries(group: AnnotationGroup): boolean {
     return group.highlights.length > 0
         || group.callouts.length > 0
         || group.gutterMarkers.length > 0
@@ -122,6 +122,22 @@ function groupEntries(group: AnnotationGroup): AnnotationEntry[] {
 
 function groupCommentEntries(group: AnnotationGroup): ExplanationCommentEntry[] {
     return [...group.explanationComments];
+}
+
+interface ClearAccumulator {
+    clearedPaths: Set<string>;
+    clearedUris: Set<string>;
+    removedCommentEntries: ExplanationCommentEntry[];
+    clearedIds: number;
+}
+
+function finalizeClearResult(acc: ClearAccumulator): AnnotationStoreClearResult {
+    return {
+        clearedIds: acc.clearedIds,
+        clearedPaths: Array.from(acc.clearedPaths),
+        clearedUris: Array.from(acc.clearedUris),
+        removedCommentEntries: acc.removedCommentEntries,
+    };
 }
 
 function entriesForSurface(group: AnnotationGroup, surface: AnnotationSurface): AnnotationEntry[] {
@@ -215,21 +231,16 @@ export class AnnotationStore {
     }
 
     public clear(filter: AnnotationClearFilter = {}): AnnotationStoreClearResult {
-        const clearedPaths = new Set<string>();
-        const clearedUris = new Set<string>();
-        const removedCommentEntries: ExplanationCommentEntry[] = [];
-        let clearedIds = 0;
-
         if (filter.all) {
-            clearedIds = this.groupsById.size;
-            for (const group of this.groupsById.values()) {
-                this.addEntryTargets(clearedPaths, clearedUris, groupEntries(group));
-                removedCommentEntries.push(...groupCommentEntries(group));
-            }
-            this.groupsById.clear();
-            return { clearedIds, clearedPaths: Array.from(clearedPaths), clearedUris: Array.from(clearedUris), removedCommentEntries };
+            return this.clearAllGroupsWithReport();
         }
 
+        const accumulator: ClearAccumulator = {
+            clearedPaths: new Set<string>(),
+            clearedUris: new Set<string>(),
+            removedCommentEntries: [],
+            clearedIds: 0,
+        };
         const targetKey = filter.targetUri?.toString();
         const hasTargetFilter = targetKey !== undefined || filter.targetPath !== undefined;
         const groupsToClear = filter.id
@@ -240,34 +251,58 @@ export class AnnotationStore {
             if (!group) {
                 continue;
             }
-
             if (hasTargetFilter) {
-                const removedEntries = this.removeEntriesForTarget(group, targetKey, filter.targetPath);
-                if (removedEntries.length > 0) {
-                    if (filter.targetPath) {
-                        clearedPaths.add(filter.targetPath);
-                    } else {
-                        this.addEntryTargets(clearedPaths, new Set<string>(), removedEntries);
-                    }
-                    if (targetKey) {
-                        clearedUris.add(targetKey);
-                    } else {
-                        this.addEntryTargets(new Set<string>(), clearedUris, removedEntries);
-                    }
-                    removedCommentEntries.push(...removedEntries.filter((entry): entry is ExplanationCommentEntry => 'thread' in entry));
-                    clearedIds += 1;
-                }
-                if (!annotationGroupHasEntries(group)) {
-                    this.groupsById.delete(id);
-                }
+                this.clearTargetedFromGroup(id, group, targetKey, filter.targetPath, accumulator);
             } else if (this.groupsById.delete(id)) {
-                clearedIds += 1;
-                this.addEntryTargets(clearedPaths, clearedUris, groupEntries(group));
-                removedCommentEntries.push(...groupCommentEntries(group));
+                accumulator.clearedIds += 1;
+                this.addEntryTargets(accumulator.clearedPaths, accumulator.clearedUris, groupEntries(group));
+                accumulator.removedCommentEntries.push(...groupCommentEntries(group));
             }
         }
 
-        return { clearedIds, clearedPaths: Array.from(clearedPaths), clearedUris: Array.from(clearedUris), removedCommentEntries };
+        return finalizeClearResult(accumulator);
+    }
+
+    private clearAllGroupsWithReport(): AnnotationStoreClearResult {
+        const accumulator: ClearAccumulator = {
+            clearedPaths: new Set<string>(),
+            clearedUris: new Set<string>(),
+            removedCommentEntries: [],
+            clearedIds: this.groupsById.size,
+        };
+        for (const group of this.groupsById.values()) {
+            this.addEntryTargets(accumulator.clearedPaths, accumulator.clearedUris, groupEntries(group));
+            accumulator.removedCommentEntries.push(...groupCommentEntries(group));
+        }
+        this.groupsById.clear();
+        return finalizeClearResult(accumulator);
+    }
+
+    private clearTargetedFromGroup(
+        id: AnnotationId,
+        group: AnnotationGroup,
+        targetKey: string | undefined,
+        targetPath: string | undefined,
+        acc: ClearAccumulator,
+    ): void {
+        const removedEntries = this.removeEntriesForTarget(group, targetKey, targetPath);
+        if (removedEntries.length > 0) {
+            if (targetPath) {
+                acc.clearedPaths.add(targetPath);
+            } else {
+                this.addEntryTargets(acc.clearedPaths, new Set<string>(), removedEntries);
+            }
+            if (targetKey) {
+                acc.clearedUris.add(targetKey);
+            } else {
+                this.addEntryTargets(new Set<string>(), acc.clearedUris, removedEntries);
+            }
+            acc.removedCommentEntries.push(...removedEntries.filter((entry): entry is ExplanationCommentEntry => 'thread' in entry));
+            acc.clearedIds += 1;
+        }
+        if (!annotationGroupHasEntries(group)) {
+            this.groupsById.delete(id);
+        }
     }
 
     public clearAll(): void {

@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
  * Logger class for MCP Server extension
  * Uses VS Code's OutputChannel for reliable logging across async operations
  */
-export class Logger {
+class Logger {
     private static instance: Logger;
     private outputChannel: vscode.OutputChannel;
 

@@ -108,13 +108,16 @@ function normalizeReadEncoding(encoding: string): SupportedReadEncoding {
     throw new Error(`Unsupported encoding: ${encoding}. Supported encodings: utf-8, latin1, base64.`);
 }
 
-function assertReadBounds(maxCharacters: number, startLine: number, endLine: number): void {
+function assertMaxCharacters(maxCharacters: number): void {
     if (!Number.isInteger(maxCharacters) || maxCharacters <= 0) {
         throw new Error('maxCharacters must be a positive integer.');
     }
     if (maxCharacters > MAX_READ_CHARACTERS) {
         throw new Error(`maxCharacters cannot exceed ${MAX_READ_CHARACTERS}.`);
     }
+}
+
+function assertLineRangeBounds(startLine: number, endLine: number): void {
     if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) {
         throw new Error('Line ranges must use integer line numbers.');
     }
@@ -124,6 +127,11 @@ function assertReadBounds(maxCharacters: number, startLine: number, endLine: num
     if (startLine >= 0 && endLine >= 0 && endLine < startLine) {
         throw new Error(`End line ${endLine + 1} is less than start line ${startLine + 1}`);
     }
+}
+
+function assertReadBounds(maxCharacters: number, startLine: number, endLine: number): void {
+    assertMaxCharacters(maxCharacters);
+    assertLineRangeBounds(startLine, endLine);
 }
 
 function hasLineRange(startLine: number, endLine: number): boolean {
@@ -163,6 +171,52 @@ function toolLineNumberToZeroBased(lineNumber: number, name: string): number {
     return lineNumber - 1;
 }
 
+function extractLineSlice(textContent: string, startLine: number, endLine: number, maxCharacters: number): string {
+    const lines = textContent.split('\n');
+    const effectiveStartLine = startLine >= 0 ? startLine : 0;
+    const effectiveEndLine = endLine >= 0 ? endLine : lines.length - 1;
+
+    if (effectiveStartLine >= lines.length) {
+        throw new Error(`Start line ${effectiveStartLine + 1} is out of range (1-${lines.length})`);
+    }
+    if (effectiveEndLine >= lines.length) {
+        throw new Error(`End line ${effectiveEndLine + 1} is out of range (1-${lines.length})`);
+    }
+    if (effectiveEndLine < effectiveStartLine) {
+        throw new Error(`End line ${effectiveEndLine + 1} is less than start line ${effectiveStartLine + 1}`);
+    }
+
+    const partialContent = lines.slice(effectiveStartLine, effectiveEndLine + 1).join('\n');
+    if (partialContent.length > maxCharacters) {
+        throw new Error(`File content exceeds the maximum character limit (${partialContent.length} vs ${maxCharacters} allowed)`);
+    }
+    console.log(`[readWorkspaceFile] Returning lines ${effectiveStartLine + 1}-${effectiveEndLine + 1}, length: ${partialContent.length} characters`);
+    return partialContent;
+}
+
+function decodeFileContent(
+    fileContent: Uint8Array,
+    encoding: SupportedReadEncoding,
+    maxCharacters: number,
+    startLine: number,
+    endLine: number,
+): string {
+    if (encoding === 'base64') {
+        return Buffer.from(fileContent).toString('base64');
+    }
+
+    const textContent = new TextDecoder(encoding).decode(fileContent);
+
+    if (hasLineRange(startLine, endLine)) {
+        return extractLineSlice(textContent, startLine, endLine, maxCharacters);
+    }
+
+    if (textContent.length > maxCharacters) {
+        throw new Error(`File content exceeds the maximum character limit (${textContent.length} vs ${maxCharacters} allowed)`);
+    }
+    return textContent;
+}
+
 export async function readWorkspaceFile(
     workspacePath: string,
     encoding: string = 'utf-8',
@@ -185,41 +239,7 @@ export async function readWorkspaceFile(
         const fileContent = await vscode.workspace.fs.readFile(fileUri);
         console.log(`[readWorkspaceFile] File read successfully, size: ${fileContent.byteLength} bytes`);
         assertSafeReadSize(fileContent.byteLength, normalizedEncoding, maxCharacters);
-
-        if (normalizedEncoding === 'base64') {
-            return Buffer.from(fileContent).toString('base64');
-        }
-
-        const textDecoder = new TextDecoder(normalizedEncoding);
-        const textContent = textDecoder.decode(fileContent);
-
-        if (hasLineRange(startLine, endLine)) {
-            const lines = textContent.split('\n');
-            const effectiveStartLine = startLine >= 0 ? startLine : 0;
-            const effectiveEndLine = endLine >= 0 ? endLine : lines.length - 1;
-
-            if (effectiveStartLine >= lines.length) {
-                throw new Error(`Start line ${effectiveStartLine + 1} is out of range (1-${lines.length})`);
-            }
-            if (effectiveEndLine >= lines.length) {
-                throw new Error(`End line ${effectiveEndLine + 1} is out of range (1-${lines.length})`);
-            }
-            if (effectiveEndLine < effectiveStartLine) {
-                throw new Error(`End line ${effectiveEndLine + 1} is less than start line ${effectiveStartLine + 1}`);
-            }
-
-            const partialContent = lines.slice(effectiveStartLine, effectiveEndLine + 1).join('\n');
-            if (partialContent.length > maxCharacters) {
-                throw new Error(`File content exceeds the maximum character limit (${partialContent.length} vs ${maxCharacters} allowed)`);
-            }
-            console.log(`[readWorkspaceFile] Returning lines ${effectiveStartLine + 1}-${effectiveEndLine + 1}, length: ${partialContent.length} characters`);
-            return partialContent;
-        }
-
-        if (textContent.length > maxCharacters) {
-            throw new Error(`File content exceeds the maximum character limit (${textContent.length} vs ${maxCharacters} allowed)`);
-        }
-        return textContent;
+        return decodeFileContent(fileContent, normalizedEncoding, maxCharacters, startLine, endLine);
     } catch (error) {
         console.error('[readWorkspaceFile] Error:', error);
         throw error;

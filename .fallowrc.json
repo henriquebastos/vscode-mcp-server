@@ -2,6 +2,7 @@
     "$schema": "https://docs.fallow.tools/schema/fallowrc.json",
     "entry": [
         ".vscode-test.mjs",
+        "scripts/*.mjs",
         "src/test/**/*.test.ts"
     ],
     "ignoreDependencies": [
@@ -13,5 +14,8 @@
             "file": "src/test/testUtils.ts",
             "exports": ["*"]
         }
-    ]
+    ],
+    "health": {
+        "ignore": ["scripts/**"]
+    }
 }

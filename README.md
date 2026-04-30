@@ -286,6 +286,28 @@ Remember that you need to enable the server first by clicking on the status bar 
 
 Contributions are welcome! Feel free to submit issues or pull requests.
 
+### Development workflow
+
+```bash
+npm install
+npm run compile           # tsc -p ./
+npm run lint              # eslint src
+npm test                  # vscode-test (151 tests, no coverage)
+npm run test:coverage     # vscode-test with c8 coverage; sanitizes coverage-final.json for fallow
+npm run fallow            # fallow combined check (dead code + duplication + complexity), uses real coverage
+npm run fallow:audit      # fallow audit; pair with --base <ref> in CI to gate change-sets
+npm run fallow:fix        # fallow fix --dry-run; preview auto-fixable findings
+npm run check             # test:coverage + fallow (the implementation gate)
+```
+
+`npm run check` is the single command to run before committing. It re-runs the
+full test suite with coverage, sanitizes the c8 output for fallow's strict
+Istanbul parser, and reports any new dead code, duplication, or complexity
+regressions with accurate per-function CRAP scores.
+
+Fallow configuration lives in `.fallowrc.json`. The `FALLOW_COVERAGE` env var
+is wired into the npm scripts and points at `coverage/coverage-final.json`.
+
 ## License
 
 [MIT](LICENSE)

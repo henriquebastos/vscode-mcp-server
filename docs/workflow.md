@@ -202,20 +202,18 @@ Notes:
 
 ## Commit policy
 
-Default: do not commit unless the user has explicitly chosen an autonomous commit workflow for the session.
+This PRD workflow is an autonomous commit workflow. When using it, commit verified completed work before reporting completion unless the user explicitly opts out before implementation starts.
 
-If not committing:
+Rules:
 
-- close beans with verification evidence;
-- mention that changes are uncommitted if relevant;
-- leave the user’s commit workflow untouched.
-
-If autonomous commit mode is explicitly active:
-
-- commit only a coherent bean or tightly coupled bean group;
+- commit only a coherent bean, tightly coupled bean group, or completed PRD implementation;
+- prefer atomic commits where practical;
+- run the relevant verification gate before committing;
+- check `git config user.name` and `git config user.email` before the first commit in a repository;
 - use a semantic, why-focused commit message;
 - include relevant bean id(s) in the commit message when practical;
-- close beans with the commit hash and verification summary.
+- include the commit hash and verification summary in bean close reasons when commits exist;
+- if committing is blocked by verification failures or ambiguous ownership of unrelated working-tree changes, report the blocker and stop instead of leaving completed work silently uncommitted.
 
 ## Phase C — Inspection
 

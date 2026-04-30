@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { FeedbackSessionSnapshot} from './feedback-service';
+import type { FeedbackSessionSnapshot } from './feedback-service';
 import { getFeedbackCaptureService } from './feedback-service';
 
 export const FEEDBACK_ADD_COMMAND = 'vscode-mcp-server.feedback.add';

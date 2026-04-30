@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import type { DiffEntryMatch} from './diff-service';
+import type { DiffEntryMatch } from './diff-service';
 import { getEditorDiffService } from './diff-service';
-import type { SerializedRange} from './location-utils';
+import type { SerializedRange } from './location-utils';
 import { isUriInsideWorkspace, uriToWorkspacePath, vsCodeRangeToSerializedRange } from './location-utils';
 
 const DEFAULT_MAX_SELECTED_TEXT_CHARACTERS = 4000;

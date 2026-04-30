@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import type { WorkspacePath} from '../workspace/workspace-boundary';
+import type { WorkspacePath } from '../workspace/workspace-boundary';
 import { assertWorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';

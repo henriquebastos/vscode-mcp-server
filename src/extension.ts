@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { MCPServer } from './server';
-import type { ResolvedMcpConfig} from './runtime-config';
+import type { ResolvedMcpConfig } from './runtime-config';
 import { resolveMcpConfig } from './runtime-config';
 import { registerFeedbackCommands } from './editor/feedback-commands';
 import { disposeFeedbackCaptureService } from './editor/feedback-service';

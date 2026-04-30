@@ -12,9 +12,9 @@ import type {
     HoverNoteEntry
 } from './annotation-store';
 import { VsCodeAnnotationRenderer } from './annotation-renderer';
-import type { AnnotationId} from './ids';
+import type { AnnotationId } from './ids';
 import { toAnnotationId } from './ids';
-import type { McpRange} from './location-utils';
+import type { McpRange } from './location-utils';
 import { mcpRangeToVsCodeRange, resolveEditorTarget, isUriInsideWorkspace, uriToWorkspacePath } from './location-utils';
 
 export type { AnnotationKind, AnnotationMode } from './annotation-store';

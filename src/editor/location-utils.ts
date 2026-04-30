@@ -1,5 +1,14 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
+import {
+    assertWorkspacePath,
+    getSingleWorkspaceRoot,
+    isUriInsideWorkspace,
+    normalizeWorkspacePath,
+    uriToWorkspacePath,
+    workspacePathToUri
+} from '../workspace/workspace-boundary';
+
+export { isUriInsideWorkspace, uriToWorkspacePath } from '../workspace/workspace-boundary';
 
 export interface EditorTargetInput {
     path?: string;
@@ -27,59 +36,29 @@ export interface SerializedRange {
     end: Required<McpPosition>;
 }
 
-function getWorkspaceFolder(): vscode.WorkspaceFolder {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-        throw new Error('No workspace folder is open.');
-    }
-
-    return workspaceFolder;
-}
-
-function workspacePathSegments(workspacePath: string): string[] {
-    return workspacePath.split(/[\\/]+/).filter(segment => segment.length > 0 && segment !== '.');
-}
-
-function normalizeWorkspacePath(workspacePath: string): string {
-    return workspacePathSegments(workspacePath).join('/');
-}
-
-function assertWorkspaceRelativePath(workspacePath: string): void {
-    const segments = workspacePathSegments(workspacePath);
-    const isWindowsAbsolutePath = /^[A-Za-z]:/.test(workspacePath);
-
-    if (path.isAbsolute(workspacePath) || isWindowsAbsolutePath || segments.includes('..')) {
-        throw new Error(`Path must stay within the workspace: ${workspacePath}`);
-    }
-}
-
-export function isUriInsideWorkspace(uri: vscode.Uri): boolean {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-        return false;
-    }
-
-    const relativePath = path.relative(workspaceFolder.uri.fsPath, uri.fsPath);
-    return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
-}
-
-export function uriToWorkspacePath(uri: vscode.Uri): string {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-        return uri.fsPath;
-    }
-
-    return normalizeWorkspacePath(path.relative(workspaceFolder.uri.fsPath, uri.fsPath));
-}
-
-function uriForWorkspacePath(workspacePath: string): vscode.Uri {
-    assertWorkspaceRelativePath(workspacePath);
-    const workspaceFolder = getWorkspaceFolder();
-    return vscode.Uri.joinPath(workspaceFolder.uri, ...workspacePathSegments(workspacePath));
-}
-
 function findVisibleEditor(uri: vscode.Uri): vscode.TextEditor | undefined {
     return vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+}
+
+function hasWorkspaceRoot(): boolean {
+    return Boolean(vscode.workspace.workspaceFolders?.[0]);
+}
+
+function assertSafeEditorUri(uri: vscode.Uri, rawUri: string): void {
+    if (!hasWorkspaceRoot()) {
+        if (uri.scheme === 'file') {
+            getSingleWorkspaceRoot();
+        }
+        return;
+    }
+
+    if ((uri.scheme === 'file' || uri.scheme === 'git') && !isUriInsideWorkspace(uri)) {
+        throw new Error(`URI must stay within the workspace: ${rawUri}`);
+    }
+}
+
+function editorUriPath(uri: vscode.Uri): string {
+    return isUriInsideWorkspace(uri) ? uriToWorkspacePath(uri) : uri.fsPath;
 }
 
 export function mcpPositionToVsCodePosition(position: McpPosition): vscode.Position {
@@ -125,18 +104,17 @@ export async function resolveEditorTarget(input: EditorTargetInput = {}): Promis
 
     if (hasUri && input.uri) {
         const uri = vscode.Uri.parse(input.uri, true);
-        if (uri.scheme === 'file' && !isUriInsideWorkspace(uri)) {
-            throw new Error(`URI must stay within the workspace: ${input.uri}`);
-        }
+        assertSafeEditorUri(uri, input.uri);
         return {
             uri,
-            path: uriToWorkspacePath(uri),
+            path: editorUriPath(uri),
             editor: findVisibleEditor(uri)
         };
     }
 
     if (hasPath && input.path) {
-        const uri = uriForWorkspacePath(input.path);
+        const workspacePath = assertWorkspacePath(input.path);
+        const uri = workspacePathToUri(workspacePath);
         return {
             uri,
             path: normalizeWorkspacePath(input.path),
@@ -149,9 +127,11 @@ export async function resolveEditorTarget(input: EditorTargetInput = {}): Promis
         throw new Error('No active editor is available; provide a path or open an editor.');
     }
 
+    assertSafeEditorUri(editor.document.uri, editor.document.uri.toString());
+
     return {
         uri: editor.document.uri,
-        path: uriToWorkspacePath(editor.document.uri),
+        path: editorUriPath(editor.document.uri),
         editor
     };
 }

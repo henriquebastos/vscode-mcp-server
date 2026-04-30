@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { assertWorkspacePath, WorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -12,6 +13,10 @@ export type FileListingCallback = (path: string, recursive: boolean) => Promise<
 
 // Default maximum character count
 const DEFAULT_MAX_CHARACTERS = 100000;
+const MAX_RECURSIVE_LIST_ENTRIES = 1000;
+const MAX_READ_CHARACTERS = DEFAULT_MAX_CHARACTERS;
+
+type SupportedReadEncoding = 'utf-8' | 'latin1' | 'base64';
 
 /**
  * Lists files and directories in the VS Code workspace
@@ -21,40 +26,39 @@ const DEFAULT_MAX_CHARACTERS = 100000;
  */
 export async function listWorkspaceFiles(workspacePath: string, recursive: boolean = false): Promise<FileListingResult> {
     console.log(`[listWorkspaceFiles] Starting with path: ${workspacePath}, recursive: ${recursive}`);
-    
-    if (!vscode.workspace.workspaceFolders) {
-        throw new Error('No workspace folder is open');
+
+    const normalizedPath = assertWorkspacePath(workspacePath);
+    if (recursive && normalizedPath === '.') {
+        throw new Error('Recursive root listing is not allowed; choose a specific subdirectory.');
     }
 
-    const workspaceFolder = vscode.workspace.workspaceFolders[0];
-    const workspaceUri = workspaceFolder.uri;
-    
-    // Create URI for the target directory
-    const targetUri = vscode.Uri.joinPath(workspaceUri, workspacePath);
+    const targetUri = workspacePathToUri(normalizedPath);
     console.log(`[listWorkspaceFiles] Target URI: ${targetUri.fsPath}`);
 
-    async function processDirectory(dirUri: vscode.Uri, currentPath: string = ''): Promise<FileListingResult> {
+    const result: FileListingResult = [];
+
+    async function processDirectory(dirUri: vscode.Uri, currentPath: string = ''): Promise<void> {
         const entries = await vscode.workspace.fs.readDirectory(dirUri);
-        const result: FileListingResult = [];
 
         for (const [name, type] of entries) {
-            const entryPath = currentPath ? path.join(currentPath, name) : name;
+            const entryPath = currentPath ? `${currentPath}/${name}` : name;
             const itemType: 'file' | 'directory' = (type & vscode.FileType.Directory) ? 'directory' : 'file';
-            
+
             result.push({ path: entryPath, type: itemType });
+
+            if (recursive && result.length > MAX_RECURSIVE_LIST_ENTRIES) {
+                throw new Error(`Recursive listing exceeds the maximum of ${MAX_RECURSIVE_LIST_ENTRIES} entries; choose a narrower path.`);
+            }
 
             if (recursive && itemType === 'directory') {
                 const subDirUri = vscode.Uri.joinPath(dirUri, name);
-                const subEntries = await processDirectory(subDirUri, entryPath);
-                result.push(...subEntries);
+                await processDirectory(subDirUri, entryPath);
             }
         }
-
-        return result;
     }
 
     try {
-        const result = await processDirectory(targetUri);
+        await processDirectory(targetUri);
         console.log(`[listWorkspaceFiles] Found ${result.length} entries`);
         return result;
     } catch (error) {
@@ -72,80 +76,149 @@ export async function listWorkspaceFiles(workspacePath: string, recursive: boole
  * @param endLine The end line number (0-based, inclusive). Use -1 to read to the end.
  * @returns File content as string (either text-encoded or base64)
  */
+function resolveWorkspacePathUri(rawPath: string): { workspacePath: WorkspacePath; uri: vscode.Uri } {
+    const workspacePath = assertWorkspacePath(rawPath);
+    return { workspacePath, uri: workspacePathToUri(workspacePath) };
+}
+
+function assertRenameBasename(newName: string): string {
+    if (newName.trim().length === 0 || newName === '.' || newName.includes('..') || newName.includes('/') || newName.includes('\\')) {
+        throw new Error('newName must be a basename without path separators or traversal.');
+    }
+
+    return newName;
+}
+
+function siblingWorkspacePath(filePath: WorkspacePath, newName: string): WorkspacePath {
+    const directoryPath = path.posix.dirname(filePath);
+    const newFilePath = directoryPath === '.' ? newName : `${directoryPath}/${newName}`;
+    return assertWorkspacePath(newFilePath);
+}
+
+function normalizeReadEncoding(encoding: string): SupportedReadEncoding {
+    const normalizedEncoding = encoding.toLowerCase();
+    if (normalizedEncoding === 'utf8' || normalizedEncoding === 'utf-8') {
+        return 'utf-8';
+    }
+    if (normalizedEncoding === 'latin1' || normalizedEncoding === 'base64') {
+        return normalizedEncoding;
+    }
+
+    throw new Error(`Unsupported encoding: ${encoding}. Supported encodings: utf-8, latin1, base64.`);
+}
+
+function assertReadBounds(maxCharacters: number, startLine: number, endLine: number): void {
+    if (!Number.isInteger(maxCharacters) || maxCharacters <= 0) {
+        throw new Error('maxCharacters must be a positive integer.');
+    }
+    if (maxCharacters > MAX_READ_CHARACTERS) {
+        throw new Error(`maxCharacters cannot exceed ${MAX_READ_CHARACTERS}.`);
+    }
+    if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) {
+        throw new Error('Line ranges must use integer line numbers.');
+    }
+    if (startLine < -1 || endLine < -1) {
+        throw new Error('Line ranges must be -1 or non-negative line numbers.');
+    }
+    if (startLine >= 0 && endLine >= 0 && endLine < startLine) {
+        throw new Error(`End line ${endLine + 1} is less than start line ${startLine + 1}`);
+    }
+}
+
+function hasLineRange(startLine: number, endLine: number): boolean {
+    return startLine >= 0 || endLine >= 0;
+}
+
+function base64EncodedLength(byteLength: number): number {
+    return Math.ceil(byteLength / 3) * 4;
+}
+
+function assertSafeReadSize(byteLength: number, encoding: SupportedReadEncoding, maxCharacters: number): void {
+    if (encoding === 'base64') {
+        const encodedLength = base64EncodedLength(byteLength);
+        if (encodedLength > maxCharacters) {
+            throw new Error(`Base64 content exceeds the maximum character limit (${encodedLength} vs ${maxCharacters} allowed)`);
+        }
+        return;
+    }
+
+    const byteLimit = maxCharacters * 4;
+    if (byteLength > byteLimit) {
+        throw new Error(`File size ${byteLength} bytes exceeds the safe decode limit of ${byteLimit} bytes for maxCharacters=${maxCharacters}.`);
+    }
+}
+
+function toolLineNumberToZeroBased(lineNumber: number, name: string): number {
+    if (!Number.isInteger(lineNumber)) {
+        throw new Error(`${name} must be -1 or a positive integer.`);
+    }
+    if (lineNumber === -1) {
+        return -1;
+    }
+    if (lineNumber < 1) {
+        throw new Error(`${name} must be -1 or a positive integer.`);
+    }
+
+    return lineNumber - 1;
+}
+
 export async function readWorkspaceFile(
-    workspacePath: string, 
-    encoding: string = 'utf-8', 
+    workspacePath: string,
+    encoding: string = 'utf-8',
     maxCharacters: number = DEFAULT_MAX_CHARACTERS,
     startLine: number = -1,
     endLine: number = -1
 ): Promise<string> {
     console.log(`[readWorkspaceFile] Starting with path: ${workspacePath}, encoding: ${encoding}, maxCharacters: ${maxCharacters}, startLine: ${startLine}, endLine: ${endLine}`);
-    
-    if (!vscode.workspace.workspaceFolders) {
-        throw new Error('No workspace folder is open');
+
+    const normalizedEncoding = normalizeReadEncoding(encoding);
+    assertReadBounds(maxCharacters, startLine, endLine);
+    if (normalizedEncoding === 'base64' && hasLineRange(startLine, endLine)) {
+        throw new Error('Line ranges are only supported for text encodings.');
     }
 
-    const workspaceFolder = vscode.workspace.workspaceFolders[0];
-    const workspaceUri = workspaceFolder.uri;
-    
-    // Create URI for the target file
-    const fileUri = vscode.Uri.joinPath(workspaceUri, workspacePath);
+    const { uri: fileUri } = resolveWorkspacePathUri(workspacePath);
     console.log(`[readWorkspaceFile] File URI: ${fileUri.fsPath}`);
 
     try {
-        // Read the file content as Uint8Array
         const fileContent = await vscode.workspace.fs.readFile(fileUri);
         console.log(`[readWorkspaceFile] File read successfully, size: ${fileContent.byteLength} bytes`);
-        
-        if (encoding === 'base64') {
-            // Special case for base64 encoding
-            if (fileContent.byteLength > maxCharacters) {
-                throw new Error(`File content exceeds the maximum character limit (approx. ${fileContent.byteLength} bytes vs ${maxCharacters} allowed)`);
-            }
-            
-            // For base64, we cannot extract lines meaningfully, so we ignore startLine and endLine
-            if (startLine >= 0 || endLine >= 0) {
-                console.warn(`[readWorkspaceFile] Line numbers specified for base64 encoding, ignoring`);
-            }
-            
+        assertSafeReadSize(fileContent.byteLength, normalizedEncoding, maxCharacters);
+
+        if (normalizedEncoding === 'base64') {
             return Buffer.from(fileContent).toString('base64');
-        } else {
-            // Regular text encoding (utf-8, latin1, etc.)
-            const textDecoder = new TextDecoder(encoding);
-            const textContent = textDecoder.decode(fileContent);
-            
-            // Check if the character count exceeds the limit
-            if (textContent.length > maxCharacters) {
-                throw new Error(`File content exceeds the maximum character limit (${textContent.length} vs ${maxCharacters} allowed)`);
-            }
-            
-            // If line numbers are specified and valid, extract just those lines
-            if (startLine >= 0 || endLine >= 0) {
-                // Split the content into lines
-                const lines = textContent.split('\n');
-                
-                // Set effective start and end lines
-                const effectiveStartLine = startLine >= 0 ? startLine : 0;
-                const effectiveEndLine = endLine >= 0 ? Math.min(endLine, lines.length - 1) : lines.length - 1;
-                
-                // Validate line numbers
-                if (effectiveStartLine >= lines.length) {
-                    throw new Error(`Start line ${effectiveStartLine + 1} is out of range (1-${lines.length})`);
-                }
-                
-                // Make sure endLine is not less than startLine
-                if (effectiveEndLine < effectiveStartLine) {
-                    throw new Error(`End line ${effectiveEndLine + 1} is less than start line ${effectiveStartLine + 1}`);
-                }
-                
-                // Extract the requested lines and join them back together
-                const partialContent = lines.slice(effectiveStartLine, effectiveEndLine + 1).join('\n');
-                console.log(`[readWorkspaceFile] Returning lines ${effectiveStartLine + 1}-${effectiveEndLine + 1}, length: ${partialContent.length} characters`);
-                return partialContent;
-            }
-            
-            return textContent;
         }
+
+        const textDecoder = new TextDecoder(normalizedEncoding);
+        const textContent = textDecoder.decode(fileContent);
+
+        if (hasLineRange(startLine, endLine)) {
+            const lines = textContent.split('\n');
+            const effectiveStartLine = startLine >= 0 ? startLine : 0;
+            const effectiveEndLine = endLine >= 0 ? endLine : lines.length - 1;
+
+            if (effectiveStartLine >= lines.length) {
+                throw new Error(`Start line ${effectiveStartLine + 1} is out of range (1-${lines.length})`);
+            }
+            if (effectiveEndLine >= lines.length) {
+                throw new Error(`End line ${effectiveEndLine + 1} is out of range (1-${lines.length})`);
+            }
+            if (effectiveEndLine < effectiveStartLine) {
+                throw new Error(`End line ${effectiveEndLine + 1} is less than start line ${effectiveStartLine + 1}`);
+            }
+
+            const partialContent = lines.slice(effectiveStartLine, effectiveEndLine + 1).join('\n');
+            if (partialContent.length > maxCharacters) {
+                throw new Error(`File content exceeds the maximum character limit (${partialContent.length} vs ${maxCharacters} allowed)`);
+            }
+            console.log(`[readWorkspaceFile] Returning lines ${effectiveStartLine + 1}-${effectiveEndLine + 1}, length: ${partialContent.length} characters`);
+            return partialContent;
+        }
+
+        if (textContent.length > maxCharacters) {
+            throw new Error(`File content exceeds the maximum character limit (${textContent.length} vs ${maxCharacters} allowed)`);
+        }
+        return textContent;
     } catch (error) {
         console.error('[readWorkspaceFile] Error:', error);
         throw error;
@@ -158,7 +231,7 @@ export async function readWorkspaceFile(
  * @param fileListingCallback Callback function for file listing operations
  */
 export function registerFileTools(
-    server: McpServer, 
+    server: McpServer,
     fileListingCallback: FileListingCallback
 ): void {
     // Add list_files tool
@@ -167,9 +240,9 @@ export function registerFileTools(
         `Explores directory structure in VS Code workspace.
 
         WHEN TO USE: Understanding project structure, finding files before read/modify operations.
-        
+
         CRITICAL: NEVER set recursive=true on root directory (.) - output too large. Use recursive only on specific subdirectories.
-        
+
         Returns files and directories at specified path. Start with path='.' to explore root, then dive into specific subdirectories with recursive=true.`,
         {
             path: z.string().describe('The path to list files from'),
@@ -177,7 +250,7 @@ export function registerFileTools(
         },
         async ({ path, recursive = false }): Promise<CallToolResult> => {
             console.log(`[list_files] Tool called with path=${path}, recursive=${recursive}`);
-            
+
             if (!fileListingCallback) {
                 console.error('[list_files] File listing callback not set');
                 throw new Error('File listing callback not set');
@@ -187,7 +260,7 @@ export function registerFileTools(
                 console.log('[list_files] Calling file listing callback');
                 const files = await fileListingCallback(path, recursive);
                 console.log(`[list_files] Callback returned ${files.length} items`);
-                
+
                 const result: CallToolResult = {
                     content: [
                         {
@@ -211,29 +284,28 @@ export function registerFileTools(
         `Retrieves file contents with size limits and partial reading support.
 
         WHEN TO USE: Reading code, config files, analyzing implementations. Files >100k chars will fail.
-        
-        Encoding: Text encodings (utf-8, latin1, etc.) for text files, 'base64' for base64-encoded string.
+
+        Encoding: Supported text encodings are 'utf-8'/'utf8' and 'latin1'; use 'base64' for a base64-encoded string.
         Line numbers: Use startLine/endLine (1-based) for large files to read specific sections only.
-        
+
         If file too large: Use startLine/endLine to read relevant sections only.`,
         {
             path: z.string().describe('The path to the file to read'),
-            encoding: z.string().optional().default('utf-8').describe('Encoding to convert the file content to a string. Use "base64" for base64-encoded string'),
+            encoding: z.string().optional().default('utf-8').describe('Encoding to convert the file content to a string. Supported values: "utf-8", "utf8", "latin1", "base64"'),
             maxCharacters: z.number().optional().default(DEFAULT_MAX_CHARACTERS).describe('Maximum character count (default: 100,000)'),
             startLine: z.number().optional().default(-1).describe('The start line number (1-based, inclusive). Default: read from beginning, denoted by -1'),
             endLine: z.number().optional().default(-1).describe('The end line number (1-based, inclusive). Default: read to end, denoted by -1')
         },
         async ({ path, encoding = 'utf-8', maxCharacters = DEFAULT_MAX_CHARACTERS, startLine = -1, endLine = -1 }): Promise<CallToolResult> => {
             console.log(`[read_file] Tool called with path=${path}, encoding=${encoding}, maxCharacters=${maxCharacters}, startLine=${startLine}, endLine=${endLine}`);
-            
-            // Convert 1-based input to 0-based for VS Code API
-            const zeroBasedStartLine = startLine > 0 ? startLine - 1 : startLine;
-            const zeroBasedEndLine = endLine > 0 ? endLine - 1 : endLine;
-            
+
             try {
+                // Convert 1-based input to 0-based for VS Code API
+                const zeroBasedStartLine = toolLineNumberToZeroBased(startLine, 'startLine');
+                const zeroBasedEndLine = toolLineNumberToZeroBased(endLine, 'endLine');
                 console.log('[read_file] Reading file');
                 const content = await readWorkspaceFile(path, encoding, maxCharacters, zeroBasedStartLine, zeroBasedEndLine);
-                
+
                 const result: CallToolResult = {
                     content: [
                         {
@@ -269,15 +341,8 @@ export function registerFileTools(
         async ({ sourcePath, targetPath, overwrite = false }): Promise<CallToolResult> => {
             console.log(`[move_file] Tool called with sourcePath=${sourcePath}, targetPath=${targetPath}, overwrite=${overwrite}`);
 
-            if (!vscode.workspace.workspaceFolders) {
-                throw new Error('No workspace folder is open');
-            }
-
-            const workspaceFolder = vscode.workspace.workspaceFolders[0];
-            const workspaceUri = workspaceFolder.uri;
-
-            const sourceUri = vscode.Uri.joinPath(workspaceUri, sourcePath);
-            const targetUri = vscode.Uri.joinPath(workspaceUri, targetPath);
+            const { workspacePath: normalizedSourcePath, uri: sourceUri } = resolveWorkspacePathUri(sourcePath);
+            const { workspacePath: normalizedTargetPath, uri: targetUri } = resolveWorkspacePathUri(targetPath);
 
             try {
                 console.log(`[move_file] Moving from ${sourceUri.fsPath} to ${targetUri.fsPath}`);
@@ -298,7 +363,7 @@ export function registerFileTools(
                     content: [
                         {
                             type: 'text',
-                            text: `Successfully moved ${sourcePath} to ${targetPath}`
+                            text: `Successfully moved ${normalizedSourcePath} to ${normalizedTargetPath}`
                         }
                     ]
                 };
@@ -328,17 +393,10 @@ export function registerFileTools(
         async ({ filePath, newName, overwrite = false }): Promise<CallToolResult> => {
             console.log(`[rename_file] Tool called with filePath=${filePath}, newName=${newName}, overwrite=${overwrite}`);
 
-            if (!vscode.workspace.workspaceFolders) {
-                throw new Error('No workspace folder is open');
-            }
-
-            const workspaceFolder = vscode.workspace.workspaceFolders[0];
-            const workspaceUri = workspaceFolder.uri;
-
-            const fileUri = vscode.Uri.joinPath(workspaceUri, filePath);
-            const directoryPath = path.dirname(filePath);
-            const newFilePath = path.join(directoryPath, newName);
-            const newFileUri = vscode.Uri.joinPath(workspaceUri, newFilePath);
+            const safeNewName = assertRenameBasename(newName);
+            const { workspacePath: normalizedFilePath, uri: fileUri } = resolveWorkspacePathUri(filePath);
+            const newFilePath = siblingWorkspacePath(normalizedFilePath, safeNewName);
+            const newFileUri = workspacePathToUri(newFilePath);
 
             try {
                 console.log(`[rename_file] Renaming ${fileUri.fsPath} to ${newFileUri.fsPath}`);
@@ -359,7 +417,7 @@ export function registerFileTools(
                     content: [
                         {
                             type: 'text',
-                            text: `Successfully renamed ${filePath} to ${newName}`
+                            text: `Successfully renamed ${normalizedFilePath} to ${safeNewName}`
                         }
                     ]
                 };
@@ -377,7 +435,7 @@ export function registerFileTools(
         `Copies a file to a new location.
 
         WHEN TO USE: Creating backups, duplicating files for testing, creating template files.
-        
+
         LIMITATION: Only works for files, not directories.`,
         {
             sourcePath: z.string().describe('The path of the file to copy'),
@@ -387,15 +445,8 @@ export function registerFileTools(
         async ({ sourcePath, targetPath, overwrite = false }): Promise<CallToolResult> => {
             console.log(`[copy_file] Tool called with sourcePath=${sourcePath}, targetPath=${targetPath}, overwrite=${overwrite}`);
 
-            if (!vscode.workspace.workspaceFolders) {
-                throw new Error('No workspace folder is open');
-            }
-
-            const workspaceFolder = vscode.workspace.workspaceFolders[0];
-            const workspaceUri = workspaceFolder.uri;
-
-            const sourceUri = vscode.Uri.joinPath(workspaceUri, sourcePath);
-            const targetUri = vscode.Uri.joinPath(workspaceUri, targetPath);
+            const { workspacePath: normalizedSourcePath, uri: sourceUri } = resolveWorkspacePathUri(sourcePath);
+            const { workspacePath: normalizedTargetPath, uri: targetUri } = resolveWorkspacePathUri(targetPath);
 
             try {
                 console.log(`[copy_file] Copying from ${sourceUri.fsPath} to ${targetUri.fsPath}`);
@@ -417,7 +468,7 @@ export function registerFileTools(
                 }
 
                 if (targetExists && !overwrite) {
-                    throw new Error(`Target file ${targetPath} already exists. Use overwrite=true to overwrite.`);
+                    throw new Error(`Target file ${normalizedTargetPath} already exists. Use overwrite=true to overwrite.`);
                 }
 
                 // Read the source file
@@ -432,7 +483,7 @@ export function registerFileTools(
                     content: [
                         {
                             type: 'text',
-                            text: `Successfully copied ${sourcePath} to ${targetPath}`
+                            text: `Successfully copied ${normalizedSourcePath} to ${normalizedTargetPath}`
                         }
                     ]
                 };

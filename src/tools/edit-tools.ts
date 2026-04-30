@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { assertWorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -19,15 +20,7 @@ export async function createWorkspaceFile(
 ): Promise<void> {
     console.log(`[createWorkspaceFile] Starting with path: ${workspacePath}, overwrite: ${overwrite}, ignoreIfExists: ${ignoreIfExists}`);
     
-    if (!vscode.workspace.workspaceFolders) {
-        throw new Error('No workspace folder is open');
-    }
-
-    const workspaceFolder = vscode.workspace.workspaceFolders[0];
-    const workspaceUri = workspaceFolder.uri;
-    
-    // Create URI for the target file
-    const fileUri = vscode.Uri.joinPath(workspaceUri, workspacePath);
+    const fileUri = workspacePathToUri(assertWorkspacePath(workspacePath));
     console.log(`[createWorkspaceFile] File URI: ${fileUri.fsPath}`);
 
     try {
@@ -81,15 +74,7 @@ export async function replaceWorkspaceFileLines(
 ): Promise<void> {
     console.log(`[replaceWorkspaceFileLines] Starting with path: ${workspacePath}, lines: ${startLine}-${endLine}`);
     
-    if (!vscode.workspace.workspaceFolders) {
-        throw new Error('No workspace folder is open');
-    }
-
-    const workspaceFolder = vscode.workspace.workspaceFolders[0];
-    const workspaceUri = workspaceFolder.uri;
-    
-    // Create URI for the target file
-    const fileUri = vscode.Uri.joinPath(workspaceUri, workspacePath);
+    const fileUri = workspacePathToUri(assertWorkspacePath(workspacePath));
     console.log(`[replaceWorkspaceFileLines] File URI: ${fileUri.fsPath}`);
 
     try {

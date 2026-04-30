@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import * as path from 'path';
+import { assertWorkspacePath, getSingleWorkspaceRoot, isUriInsideWorkspace, uriToWorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
 
 /**
  * Get diagnostics for the entire workspace or a specific file
@@ -18,11 +18,7 @@ function getDiagnostics(filePath?: string): [vscode.Uri, vscode.Diagnostic[]][] 
             throw new Error('No workspace folder is open');
         }
 
-        const workspaceFolder = vscode.workspace.workspaceFolders[0];
-        const workspaceUri = workspaceFolder.uri;
-        
-        // Create URI for the target file
-        const fileUri = vscode.Uri.joinPath(workspaceUri, filePath);
+        const fileUri = workspacePathToUri(assertWorkspacePath(filePath));
         console.log(`[getDiagnostics] Getting diagnostics for file: ${fileUri.fsPath}`);
         
         const diagnostics = vscode.languages.getDiagnostics(fileUri);
@@ -30,6 +26,7 @@ function getDiagnostics(filePath?: string): [vscode.Uri, vscode.Diagnostic[]][] 
     }
     
     // Otherwise, get diagnostics for all files
+    getSingleWorkspaceRoot();
     console.log('[getDiagnostics] Getting diagnostics for all files');
     return vscode.languages.getDiagnostics();
 }
@@ -52,24 +49,6 @@ function getSeverityName(severity: vscode.DiagnosticSeverity): string {
         default:
             return 'Unknown';
     }
-}
-
-/**
- * Convert workspace URI to relative path
- * @param uri The Uri to convert
- * @returns Path relative to workspace root
- */
-function uriToWorkspacePath(uri: vscode.Uri): string {
-    if (!vscode.workspace.workspaceFolders) {
-        return uri.fsPath;
-    }
-
-    const workspaceFolder = vscode.workspace.workspaceFolders[0];
-    const workspaceRoot = workspaceFolder.uri.fsPath;
-    
-    // Convert to relative path
-    const relativePath = path.relative(workspaceRoot, uri.fsPath);
-    return relativePath;
 }
 
 /**
@@ -101,6 +80,9 @@ function formatDiagnostics(
     let totalIssues = 0;
     
     for (const [uri, fileDiagnostics] of diagnostics) {
+        if (!isUriInsideWorkspace(uri)) {
+            continue;
+        }
         const filePath = uriToWorkspacePath(uri);
         
         for (const diagnostic of fileDiagnostics) {

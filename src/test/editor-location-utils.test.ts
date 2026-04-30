@@ -52,6 +52,28 @@ suite('Editor Location Utilities', () => {
         assert.strictEqual(resolved.editor, undefined);
     });
 
+    test('rejects file URI targets when no workspace boundary exists', async () => {
+        sinon.stub(vscode.workspace, 'workspaceFolders').value(undefined);
+        sinon.stub(vscode.window, 'visibleTextEditors').value([]);
+
+        await assert.rejects(
+            () => resolveEditorTarget({ uri: vscode.Uri.file('/tmp/secret.ts').toString() }),
+            /No workspace folder is open\./
+        );
+    });
+
+    test('rejects file URI targets outside the workspace before editor lookup', async () => {
+        const workspaceUri = vscode.Uri.file('/workspace');
+        const visibleTextEditorsStub = sinon.stub(vscode.window, 'visibleTextEditors').value([]);
+        sinon.stub(vscode.workspace, 'workspaceFolders').value([{ uri: workspaceUri, name: 'workspace', index: 0 }]);
+
+        await assert.rejects(
+            () => resolveEditorTarget({ uri: vscode.Uri.file('/tmp/secret.ts').toString() }),
+            /URI must stay within the workspace: file:\/\/\/tmp\/secret\.ts/
+        );
+        assert.strictEqual(visibleTextEditorsStub.notCalled, true, 'outside file URI should fail before visible editor lookup');
+    });
+
     test('resolves omitted path from the active editor and fails clearly without one', async () => {
         const workspaceUri = vscode.Uri.file('/workspace');
         const activeUri = vscode.Uri.file('/workspace/src/example.ts');

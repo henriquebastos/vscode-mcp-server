@@ -251,6 +251,31 @@ export async function readWorkspaceFile(
  * @param server MCP server instance
  * @param fileListingCallback Callback function for file listing operations
  */
+async function targetUriExists(targetUri: vscode.Uri): Promise<boolean> {
+    try {
+        await vscode.workspace.fs.stat(targetUri);
+        return true;
+    } catch (error) {
+        if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') {
+            return false;
+        }
+        throw error;
+    }
+}
+
+async function runCopyFile(sourcePath: string, targetPath: string, overwrite: boolean): Promise<string> {
+    const { workspacePath: normalizedSourcePath, uri: sourceUri } = resolveWorkspacePathUri(sourcePath);
+    const { workspacePath: normalizedTargetPath, uri: targetUri } = resolveWorkspacePathUri(targetPath);
+
+    console.log(`[copy_file] Copying from ${sourceUri.fsPath} to ${targetUri.fsPath}`);
+    if (await targetUriExists(targetUri) && !overwrite) {
+        throw new Error(`Target file ${normalizedTargetPath} already exists. Use overwrite=true to overwrite.`);
+    }
+    const fileContent = await vscode.workspace.fs.readFile(sourceUri);
+    await vscode.workspace.fs.writeFile(targetUri, fileContent);
+    return `Successfully copied ${normalizedSourcePath} to ${normalizedTargetPath}`;
+}
+
 export function registerFileTools(
     server: McpServer,
     fileListingCallback: FileListingCallback
@@ -465,50 +490,10 @@ export function registerFileTools(
         },
         async ({ sourcePath, targetPath, overwrite = false }): Promise<CallToolResult> => {
             console.log(`[copy_file] Tool called with sourcePath=${sourcePath}, targetPath=${targetPath}, overwrite=${overwrite}`);
-
-            const { workspacePath: normalizedSourcePath, uri: sourceUri } = resolveWorkspacePathUri(sourcePath);
-            const { workspacePath: normalizedTargetPath, uri: targetUri } = resolveWorkspacePathUri(targetPath);
-
             try {
-                console.log(`[copy_file] Copying from ${sourceUri.fsPath} to ${targetUri.fsPath}`);
-
-                // Check if target already exists
-                let targetExists = false;
-                try {
-                    await vscode.workspace.fs.stat(targetUri);
-                    targetExists = true;
-                } catch (error) {
-                    // Only ignore FileNotFound errors - rethrow others (permissions, network, etc.)
-                    if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') {
-                        // Target doesn't exist, which is fine - continue with copy
-                        targetExists = false;
-                    } else {
-                        // Rethrow unexpected errors (permissions, network issues, etc.)
-                        throw error;
-                    }
-                }
-
-                if (targetExists && !overwrite) {
-                    throw new Error(`Target file ${normalizedTargetPath} already exists. Use overwrite=true to overwrite.`);
-                }
-
-                // Read the source file
-                const fileContent = await vscode.workspace.fs.readFile(sourceUri);
-
-                // Write to target file
-                await vscode.workspace.fs.writeFile(targetUri, fileContent);
-
+                const message = await runCopyFile(sourcePath, targetPath, overwrite);
                 console.log('[copy_file] File copy completed successfully');
-
-                const result: CallToolResult = {
-                    content: [
-                        {
-                            type: 'text',
-                            text: `Successfully copied ${normalizedSourcePath} to ${normalizedTargetPath}`
-                        }
-                    ]
-                };
-                return result;
+                return { content: [{ type: 'text', text: message }] };
             } catch (error) {
                 console.error('[copy_file] Error in tool:', error);
                 throw error;

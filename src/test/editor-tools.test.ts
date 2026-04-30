@@ -6,7 +6,7 @@ import { disposeEditorAnnotationService } from '../editor/annotation-service';
 import { disposeEditorDiffService } from '../editor/diff-service';
 import { FEEDBACK_ITEM_COUNT_CONTEXT, FEEDBACK_READY_CONTEXT } from '../editor/feedback-commands';
 import { disposeFeedbackCaptureService, getFeedbackCaptureService } from '../editor/feedback-service';
-import { registerEditorTools } from '../tools/editor-tools';
+import { registerEditorTools, validateOpenDiffMode } from '../tools/editor-tools';
 
 suite('Editor MCP Tools', () => {
     setup(() => {
@@ -42,6 +42,23 @@ suite('Editor MCP Tools', () => {
 
         return z.object(schema as z.ZodRawShape).safeParse(input);
     }
+
+    test('validateOpenDiffMode enforces exactly-one-mode and matching source URIs', () => {
+        assert.deepStrictEqual(validateOpenDiffMode({}), [
+            'Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.'
+        ]);
+        assert.deepStrictEqual(validateOpenDiffMode({ leftUri: 'a', rightUri: 'b', entries: [{}] }), [
+            'Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.'
+        ]);
+        assert.deepStrictEqual(validateOpenDiffMode({ leftUri: 'a' }), [
+            'Source-mode diffs require both leftUri and rightUri.'
+        ]);
+        assert.deepStrictEqual(validateOpenDiffMode({ rightUri: 'b' }), [
+            'Source-mode diffs require both leftUri and rightUri.'
+        ]);
+        assert.deepStrictEqual(validateOpenDiffMode({ leftUri: 'a', rightUri: 'b' }), []);
+        assert.deepStrictEqual(validateOpenDiffMode({ entries: [{}] }), []);
+    });
 
     test('rejects path and uri together at the MCP schema edge', () => {
         const registeredTools = createEditorToolServer();

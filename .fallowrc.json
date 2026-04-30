@@ -15,7 +15,13 @@
             "exports": ["*"]
         }
     ],
+    "production": {
+        "health": true
+    },
     "health": {
-        "ignore": ["scripts/**"]
+        "ignore": ["scripts/**"],
+        "maxCyclomatic": 10,
+        "maxCognitive": 15,
+        "maxCrap": 30
     }
 }

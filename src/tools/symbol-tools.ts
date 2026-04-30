@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from 'zod';
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { assertWorkspacePath, getSingleWorkspaceRoot, isUriInsideWorkspace, uriToWorkspacePath, workspacePathToUri } from '../workspace/workspace-boundary';
+import type { WorkspacePath } from '../workspace/workspace-boundary';
 import { logger } from '../utils/logger';
 
 /**
@@ -55,7 +56,7 @@ function findOpenDocument(uri: vscode.Uri): vscode.TextDocument | undefined {
     return vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uriString);
 }
 
-async function readLineFromDisk(uri: vscode.Uri, line: number): Promise<string | undefined> {
+export async function readLineFromDisk(uri: vscode.Uri, line: number): Promise<string | undefined> {
     try {
         const content = await vscode.workspace.fs.readFile(uri);
         const text = Buffer.from(content).toString('utf8');
@@ -102,7 +103,7 @@ async function getPreview(uri: vscode.Uri, line?: number): Promise<string | unde
  * @param line The line number (0-based)
  * @returns The text content of the line or undefined if line doesn't exist
  */
-async function getLineText(uri: vscode.Uri, line: number): Promise<string | undefined> {
+export async function getLineText(uri: vscode.Uri, line: number): Promise<string | undefined> {
     try {
         // Open the document using VS Code's API
         const document = await vscode.workspace.openTextDocument(uri);
@@ -306,7 +307,7 @@ interface SerializedRange {
     end: SerializedPosition;
 }
 
-interface SerializedDocumentSymbol {
+export interface SerializedDocumentSymbol {
     name: string;
     detail?: string;
     kind: string;
@@ -316,67 +317,66 @@ interface SerializedDocumentSymbol {
     children?: number;
 }
 
-async function getDocumentSymbols(
-    uri: vscode.Uri,
-    maxDepth?: number
-): Promise<{
+export interface FlattenedSymbols {
     symbols: SerializedDocumentSymbol[];
     total: number;
     totalByKind: Record<string, number>;
-}> {
-    logger.info(`[getDocumentSymbols] Getting symbols for ${uri.toString()}, maxDepth: ${maxDepth}`);
+}
 
+function visitDocumentSymbol(
+    symbol: vscode.DocumentSymbol,
+    depth: number,
+    accumulator: { flatSymbols: SerializedDocumentSymbol[]; kindCounts: Record<string, number> },
+): void {
+    const kindString = symbolKindToString(symbol.kind);
+    accumulator.kindCounts[kindString] = (accumulator.kindCounts[kindString] || 0) + 1;
+
+    const processedSymbol: SerializedDocumentSymbol = {
+        name: symbol.name,
+        kind: kindString,
+        range: serializeOneBasedRange(symbol.range),
+        selectionRange: serializeOneBasedRange(symbol.selectionRange),
+        depth
+    };
+    if (symbol.detail) {
+        processedSymbol.detail = symbol.detail;
+    }
+    if (symbol.children && symbol.children.length > 0) {
+        processedSymbol.children = symbol.children.length;
+    }
+    accumulator.flatSymbols.push(processedSymbol);
+}
+
+export function flattenDocumentSymbols(symbols: vscode.DocumentSymbol[], maxDepth?: number): FlattenedSymbols {
+    const flatSymbols: SerializedDocumentSymbol[] = [];
+    const kindCounts: Record<string, number> = {};
+    const accumulator = { flatSymbols, kindCounts };
+
+    const walk = (nodes: vscode.DocumentSymbol[], depth: number): void => {
+        if (maxDepth !== undefined && depth > maxDepth) {
+            return;
+        }
+        for (const symbol of nodes) {
+            visitDocumentSymbol(symbol, depth, accumulator);
+            if (symbol.children && symbol.children.length > 0) {
+                walk(symbol.children, depth + 1);
+            }
+        }
+    };
+
+    walk(symbols, 0);
+    return { symbols: flatSymbols, total: flatSymbols.length, totalByKind: kindCounts };
+}
+
+async function getDocumentSymbols(uri: vscode.Uri, maxDepth?: number): Promise<FlattenedSymbols> {
+    logger.info(`[getDocumentSymbols] Getting symbols for ${uri.toString()}, maxDepth: ${maxDepth}`);
     try {
-        // Execute the document symbol provider
         const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
             'vscode.executeDocumentSymbolProvider',
             uri
         ) || [];
-
         logger.info(`[getDocumentSymbols] Found ${symbols.length} top-level symbols`);
-
-        const flatSymbols: SerializedDocumentSymbol[] = [];
-        const kindCounts: Record<string, number> = {};
-
-        function visitSymbol(symbol: vscode.DocumentSymbol, depth: number) {
-            const kindString = symbolKindToString(symbol.kind);
-            kindCounts[kindString] = (kindCounts[kindString] || 0) + 1;
-
-            const processedSymbol: SerializedDocumentSymbol = {
-                name: symbol.name,
-                kind: kindString,
-                range: serializeOneBasedRange(symbol.range),
-                selectionRange: serializeOneBasedRange(symbol.selectionRange),
-                depth
-            };
-            if (symbol.detail) {
-                processedSymbol.detail = symbol.detail;
-            }
-            if (symbol.children && symbol.children.length > 0) {
-                processedSymbol.children = symbol.children.length;
-            }
-            flatSymbols.push(processedSymbol);
-        }
-
-        function processSymbols(symbols: vscode.DocumentSymbol[], depth: number = 0) {
-            if (maxDepth !== undefined && depth > maxDepth) {
-                return;
-            }
-            for (const symbol of symbols) {
-                visitSymbol(symbol, depth);
-                if (symbol.children && symbol.children.length > 0) {
-                    processSymbols(symbol.children, depth + 1);
-                }
-            }
-        }
-
-        processSymbols(symbols);
-
-        return {
-            symbols: flatSymbols,
-            total: flatSymbols.length,
-            totalByKind: kindCounts
-        };
+        return flattenDocumentSymbols(symbols, maxDepth);
     } catch (error) {
         logger.error(`[getDocumentSymbols] Error: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
@@ -387,7 +387,7 @@ async function getDocumentSymbols(
  * Registers MCP symbol-related tools with the server
  * @param server MCP server instance
  */
-function formatHoverEntry(hover: { preview?: string | undefined; contents: string[]; range?: { start: { line: number; character: number }; end: { line: number; character: number } } | undefined }): string {
+export function formatHoverEntry(hover: { preview?: string | undefined; contents: string[]; range?: { start: { line: number; character: number }; end: { line: number; character: number } } | undefined }): string {
     let text = '';
     if (hover.preview) {
         text += `Code context: \`${hover.preview}\`\n\n`;
@@ -448,6 +448,79 @@ async function getSymbolDefinitionText(rawPath: string, line: number, symbol: st
     return resultText;
 }
 
+export function formatSearchSymbolsResult(
+    result: { symbols: { name: string; kind: string; containerName?: string; location: string }[]; total: number },
+    query: string,
+    maxResults: number,
+): string {
+    if (result.symbols.length === 0) {
+        return `No symbols found matching query "${query}".`;
+    }
+    let text = `Found ${result.total} symbols matching query "${query}"`;
+    if (result.total > maxResults) {
+        text += ` (showing first ${maxResults})`;
+    }
+    text += ':\n\n';
+    for (const symbol of result.symbols) {
+        text += `${symbol.name} (${symbol.kind})`;
+        if (symbol.containerName) {
+            text += ` in ${symbol.containerName}`;
+        }
+        text += `\nLocation: ${symbol.location}\n\n`;
+    }
+    return text;
+}
+
+async function runSearchWorkspaceSymbols(query: string, maxResults: number): Promise<string> {
+    logger.info('[search_symbols_code] Searching workspace symbols');
+    const result = await searchWorkspaceSymbols(query, maxResults);
+    return formatSearchSymbolsResult(result, query, maxResults);
+}
+
+export function formatDocumentSymbolEntry(symbol: SerializedDocumentSymbol): string {
+    const indent = '  '.repeat(symbol.depth);
+    let text = `${indent}${symbol.name} (${symbol.kind})`;
+    if (symbol.detail) {
+        text += ` - ${symbol.detail}`;
+    }
+    text += `\n${indent}  Range: ${symbol.range.start.line}:${symbol.range.start.character}-${symbol.range.end.line}:${symbol.range.end.character}`;
+    if (symbol.children !== undefined) {
+        text += ` | Children: ${symbol.children}`;
+    }
+    text += '\n\n';
+    return text;
+}
+
+export function formatDocumentSymbolsResult(
+    result: { symbols: SerializedDocumentSymbol[]; total: number; totalByKind: Record<string, number> },
+    workspacePath: WorkspacePath,
+): string {
+    if (result.symbols.length === 0) {
+        return `No symbols found in file: ${workspacePath}`;
+    }
+    const kindSummary = Object.entries(result.totalByKind)
+        .map(([kind, count]) => `${count} ${kind}${count !== 1 ? 's' : ''}`)
+        .join(', ');
+    let text = `Document symbols for ${workspacePath} (${result.total} total symbols):\n\nSummary: ${kindSummary}\n\n`;
+    for (const symbol of result.symbols) {
+        text += formatDocumentSymbolEntry(symbol);
+    }
+    return text;
+}
+
+async function runGetDocumentSymbols(rawPath: string, maxDepth: number | undefined): Promise<string> {
+    const workspacePath = assertWorkspacePath(rawPath);
+    const uri = workspacePathToUri(workspacePath);
+    try {
+        await vscode.workspace.fs.stat(uri);
+    } catch {
+        throw new Error(`File not found: ${rawPath}`);
+    }
+    logger.info('[get_document_symbols_code] Getting document symbols');
+    const result = await getDocumentSymbols(uri, maxDepth);
+    return formatDocumentSymbolsResult(result, workspacePath);
+}
+
 export function registerSymbolTools(server: McpServer): void {
     // Add search_symbols_code tool
     server.tool(
@@ -464,43 +537,10 @@ export function registerSymbolTools(server: McpServer): void {
         },
         async ({ query, maxResults = 10 }): Promise<CallToolResult> => {
             logger.info(`[search_symbols_code] Tool called with query="${query}", maxResults=${maxResults}`);
-
             try {
-                logger.info('[search_symbols_code] Searching workspace symbols');
-                const result = await searchWorkspaceSymbols(query, maxResults);
-
-                let resultText: string;
-
-                if (result.symbols.length === 0) {
-                    resultText = `No symbols found matching query "${query}".`;
-                } else {
-                    resultText = `Found ${result.total} symbols matching query "${query}"`;
-
-                    if (result.total > maxResults) {
-                        resultText += ` (showing first ${maxResults})`;
-                    }
-
-                    resultText += ":\n\n";
-
-                    for (const symbol of result.symbols) {
-                        resultText += `${symbol.name} (${symbol.kind})`;
-                        if (symbol.containerName) {
-                            resultText += ` in ${symbol.containerName}`;
-                        }
-                        resultText += `\nLocation: ${symbol.location}\n\n`;
-                    }
-                }
-
-                const callResult: CallToolResult = {
-                    content: [
-                        {
-                            type: 'text',
-                            text: resultText
-                        }
-                    ]
-                };
+                const result = await runSearchWorkspaceSymbols(query, maxResults);
                 logger.info('[search_symbols_code] Successfully completed');
-                return callResult;
+                return { content: [{ type: 'text', text: result }] };
             } catch (error) {
                 logger.error(`[search_symbols_code] Error in tool: ${error instanceof Error ? error.message : String(error)}`);
                 throw error;
@@ -550,63 +590,10 @@ export function registerSymbolTools(server: McpServer): void {
         },
         async ({ path, maxDepth }): Promise<CallToolResult> => {
             logger.info(`[get_document_symbols_code] Tool called with path="${path}", maxDepth=${maxDepth}`);
-
             try {
-                const workspacePath = assertWorkspacePath(path);
-                const uri = workspacePathToUri(workspacePath);
-
-                // Check if file exists
-                try {
-                    await vscode.workspace.fs.stat(uri);
-                } catch (error) {
-                    throw new Error(`File not found: ${path}`);
-                }
-
-                logger.info('[get_document_symbols_code] Getting document symbols');
-                const result = await getDocumentSymbols(uri, maxDepth);
-
-                let resultText: string;
-
-                if (result.symbols.length === 0) {
-                    resultText = `No symbols found in file: ${workspacePath}`;
-                } else {
-                    resultText = `Document symbols for ${workspacePath} (${result.total} total symbols):\n\n`;
-
-                    // Add summary by kind
-                    const kindSummary = Object.entries(result.totalByKind)
-                        .map(([kind, count]) => `${count} ${kind}${count !== 1 ? 's' : ''}`)
-                        .join(', ');
-                    resultText += `Summary: ${kindSummary}\n\n`;
-
-                    // Add hierarchical symbol listing
-                    for (const symbol of result.symbols) {
-                        const indent = '  '.repeat(symbol.depth);
-                        resultText += `${indent}${symbol.name} (${symbol.kind})`;
-
-                        if (symbol.detail) {
-                            resultText += ` - ${symbol.detail}`;
-                        }
-
-                        resultText += `\n${indent}  Range: ${symbol.range.start.line}:${symbol.range.start.character}-${symbol.range.end.line}:${symbol.range.end.character}`;
-
-                        if (symbol.children !== undefined) {
-                            resultText += ` | Children: ${symbol.children}`;
-                        }
-
-                        resultText += '\n\n';
-                    }
-                }
-
-                const callResult: CallToolResult = {
-                    content: [
-                        {
-                            type: 'text',
-                            text: resultText
-                        }
-                    ]
-                };
+                const result = await runGetDocumentSymbols(path, maxDepth);
                 logger.info('[get_document_symbols_code] Successfully completed');
-                return callResult;
+                return { content: [{ type: 'text', text: result }] };
             } catch (error) {
                 logger.error(`[get_document_symbols_code] Error in tool: ${error instanceof Error ? error.message : String(error)}`);
                 throw error;

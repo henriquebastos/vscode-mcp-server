@@ -36,19 +36,15 @@ function getDiagnostics(filePath?: string): [vscode.Uri, vscode.Diagnostic[]][] 
  * @param severity The diagnostic severity level
  * @returns String representation of the severity
  */
-function getSeverityName(severity: vscode.DiagnosticSeverity): string {
-    switch (severity) {
-        case vscode.DiagnosticSeverity.Error:
-            return 'Error';
-        case vscode.DiagnosticSeverity.Warning:
-            return 'Warning';
-        case vscode.DiagnosticSeverity.Information:
-            return 'Information';
-        case vscode.DiagnosticSeverity.Hint:
-            return 'Hint';
-        default:
-            return 'Unknown';
-    }
+const SEVERITY_NAMES: Readonly<Record<vscode.DiagnosticSeverity, string>> = {
+    [vscode.DiagnosticSeverity.Error]: 'Error',
+    [vscode.DiagnosticSeverity.Warning]: 'Warning',
+    [vscode.DiagnosticSeverity.Information]: 'Information',
+    [vscode.DiagnosticSeverity.Hint]: 'Hint',
+};
+
+export function getSeverityName(severity: vscode.DiagnosticSeverity): string {
+    return SEVERITY_NAMES[severity] ?? 'Unknown';
 }
 
 /**
@@ -59,7 +55,7 @@ function getSeverityName(severity: vscode.DiagnosticSeverity): string {
  * @param includeSource Whether to include the diagnostic source
  * @returns Formatted diagnostics as string or object
  */
-interface FormattedIssue {
+export interface FormattedIssue {
     file: string;
     line: number;
     column: number;
@@ -68,7 +64,7 @@ interface FormattedIssue {
     source?: string;
 }
 
-function collectIssues(
+export function collectIssues(
     diagnostics: [vscode.Uri, vscode.Diagnostic[]][],
     severities: vscode.DiagnosticSeverity[],
     includeSource: boolean,
@@ -102,7 +98,7 @@ function collectIssues(
     return result;
 }
 
-function renderIssuesAsText(issues: FormattedIssue[], includeSource: boolean): string {
+export function renderIssuesAsText(issues: FormattedIssue[], includeSource: boolean): string {
     if (issues.length === 0) {
         return 'No issues found.';
     }

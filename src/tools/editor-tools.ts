@@ -95,29 +95,31 @@ const openDiffShape = {
     maxFiles: positiveBoundedInteger(MAX_DIFF_FILES).optional().describe('Maximum number of normalized entries to open')
 };
 
-const openDiffSchema = exposeObjectShape(z.object(openDiffShape).superRefine((value, ctx) => {
+interface OpenDiffShape {
+    leftUri?: string | undefined;
+    rightUri?: string | undefined;
+    entries?: unknown[] | undefined;
+}
+
+export function validateOpenDiffMode(value: OpenDiffShape): string[] {
     const hasLeftSource = Boolean(value.leftUri);
     const hasRightSource = Boolean(value.rightUri);
     const hasAnySource = hasLeftSource || hasRightSource;
     const hasEntries = value.entries !== undefined;
+    const errors: string[] = [];
 
-    if (hasAnySource && hasEntries) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.'
-        });
-    }
-    if (!hasAnySource && !hasEntries) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.'
-        });
+    if (hasAnySource === hasEntries) {
+        errors.push('Provide exactly one diff mode: either leftUri/rightUri source mode or entries explicit mode.');
     }
     if (hasAnySource && (!hasLeftSource || !hasRightSource)) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'Source-mode diffs require both leftUri and rightUri.'
-        });
+        errors.push('Source-mode diffs require both leftUri and rightUri.');
+    }
+    return errors;
+}
+
+const openDiffSchema = exposeObjectShape(z.object(openDiffShape).superRefine((value, ctx) => {
+    for (const message of validateOpenDiffMode(value)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message });
     }
 }), openDiffShape);
 

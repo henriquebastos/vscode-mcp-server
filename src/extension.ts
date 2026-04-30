@@ -33,6 +33,38 @@ function createConfiguredServer(config: ResolvedMcpConfig): MCPServer {
     return server;
 }
 
+async function handleConfigChange(
+    context: vscode.ExtensionContext,
+    event: vscode.ConfigurationChangeEvent,
+): Promise<void> {
+    if (!affectsRuntimeConfig(event)) {
+        return;
+    }
+    logger.info('[configChangeListener] Runtime configuration changed - restarting server if enabled');
+    if (serverEnabled && mcpServer) {
+        await restartServerForConfigChange(context);
+        return;
+    }
+    try {
+        updateStatusBar(readRuntimeConfig());
+    } catch (error) {
+        logger.warn(`[configChangeListener] Runtime config could not be resolved while server is disabled: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+async function cleanupFailedStart(server: MCPServer, error: unknown): Promise<void> {
+    logger.error(`[startConfiguredServer] Server failed to start: ${error instanceof Error ? error.message : String(error)}`);
+    if (mcpServer !== server) {
+        return;
+    }
+    mcpServer = undefined;
+    try {
+        await server.stop();
+    } catch (stopError) {
+        logger.warn(`[startConfiguredServer] Cleanup after failed start failed: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
+    }
+}
+
 async function startConfiguredServer(config: ResolvedMcpConfig = readRuntimeConfig()): Promise<ResolvedMcpConfig> {
     logger.info(`[startConfiguredServer] Creating MCP server for ${config.host}:${config.port}`);
     const server = createConfiguredServer(config);
@@ -45,22 +77,10 @@ async function startConfiguredServer(config: ResolvedMcpConfig = readRuntimeConf
         if (mcpServer !== server || !serverEnabled) {
             throw new Error('MCP Server startup was cancelled');
         }
-        const duration = Date.now() - startTime;
-        logger.info(`[startConfiguredServer] Server started successfully at ${new Date().toISOString()} (took ${duration}ms)`);
+        logger.info(`[startConfiguredServer] Server started successfully at ${new Date().toISOString()} (took ${Date.now() - startTime}ms)`);
         return config;
     } catch (error) {
-        const shouldCleanup = mcpServer === server;
-        if (shouldCleanup) {
-            mcpServer = undefined;
-        }
-        logger.error(`[startConfiguredServer] Server failed to start: ${error instanceof Error ? error.message : String(error)}`);
-        if (shouldCleanup) {
-            try {
-                await server.stop();
-            } catch (stopError) {
-                logger.warn(`[startConfiguredServer] Cleanup after failed start failed: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
-            }
-        }
+        await cleanupFailedStart(server, error);
         throw error;
     }
 }
@@ -245,23 +265,9 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     );
 
-    const configChangeListener = vscode.workspace.onDidChangeConfiguration(async (event) => {
-        if (!affectsRuntimeConfig(event)) {
-            return;
-        }
-
-        logger.info('[configChangeListener] Runtime configuration changed - restarting server if enabled');
-        if (serverEnabled && mcpServer) {
-            await restartServerForConfigChange(context);
-            return;
-        }
-
-        try {
-            updateStatusBar(readRuntimeConfig());
-        } catch (error) {
-            logger.warn(`[configChangeListener] Runtime config could not be resolved while server is disabled: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    });
+    const configChangeListener = vscode.workspace.onDidChangeConfiguration(
+        (event) => handleConfigChange(context, event)
+    );
 
     const feedbackCommands = registerFeedbackCommands();
 
